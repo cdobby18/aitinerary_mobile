@@ -1,0 +1,176 @@
+{
+  "manila": {
+    "name": "Metro Manila",
+    "best_for": [
+      "history",
+      "food",
+      "nightlife"
+    ],
+    "highlights": [
+      "Intramuros heritage walk",
+      "Binondo food crawl",
+      "Rizal Park sunset stroll",
+      "Makati skyline evening"
+    ],
+    "transport_hints": [
+      "Use Grab or taxi for city hops during peak traffic hours.",
+      "Best to walk the compact heritage pockets in Intramuros and Makati.",
+      "Avoid midday traffic between Quezon and Makati when planning transfers."
+    ],
+    "base_daily_budget": 1800,
+    "areas": [
+      {
+        "name": "Intramuros",
+        "category": "Heritage",
+        "cost": 260,
+        "timing": "Morning",
+        "note": "Historic core with walled-city walk and local caf\u00e9s.",
+        "latitude": 14.5896,
+        "longitude": 120.975
+      },
+      {
+        "name": "Binondo",
+        "category": "Food",
+        "cost": 520,
+        "timing": "Late morning",
+        "note": "Classic food district with dumplings, noodles, and coffee stops.",
+        "latitude": 14.6003,
+        "longitude": 120.9748
+      },
+      {
+        "name": "Rizal Park",
+        "category": "City",
+        "cost": 230,
+        "timing": "Afternoon",
+        "note": "Open plaza and sunset walk with cultural landmarks nearby.",
+        "latitude": 14.5826,
+        "longitude": 120.9792
+      },
+      {
+        "name": "Makati CBD",
+        "category": "Night life",
+        "cost": 560,
+        "timing": "Evening",
+        "note": "Modern skyline dining and lively late-night neighborhoods.",
+        "latitude": 14.5547,
+        "longitude": 121.0244
+      }
+    ]
+  },
+  "cebu": {
+    "name": "Cebu",
+    "best_for": [
+      "food",
+      "beaches",
+      "heritage"
+    ],
+    "highlights": [
+      "Carbon Market food walk",
+      "Mactan waterfront sunset",
+      "Sirao Garden viewpoint",
+      "Downtown heritage route"
+    ],
+    "transport_hints": [
+      "Use a private transfer for Mactan and coastal stops.",
+      "Cebu City is easiest by short taxi hops and tricycles.",
+      "Plan waterfront time for cooler late-afternoon hours."
+    ],
+    "base_daily_budget": 1700,
+    "areas": [
+      {
+        "name": "Carbon Market",
+        "category": "Food",
+        "cost": 420,
+        "timing": "Late morning",
+        "note": "Local market with breakfast staples and easy lunch stops.",
+        "latitude": 10.2963,
+        "longitude": 123.9005
+      },
+      {
+        "name": "Downtown Cebu",
+        "category": "Heritage",
+        "cost": 240,
+        "timing": "Morning",
+        "note": "Old city core with church and plaza route.",
+        "latitude": 10.2925,
+        "longitude": 123.9059
+      },
+      {
+        "name": "Mactan Waterfront",
+        "category": "Outdoors",
+        "cost": 320,
+        "timing": "Afternoon",
+        "note": "Waterfront promenade with sunset views and casual dining.",
+        "latitude": 10.2925,
+        "longitude": 123.98
+      },
+      {
+        "name": "Sirao Garden",
+        "category": "Scenic",
+        "cost": 350,
+        "timing": "Late afternoon",
+        "note": "Viewpoint area with nicer scenery and a relaxed pace.",
+        "latitude": 10.3833,
+        "longitude": 123.8667
+      }
+    ]
+  },
+  "palawan": {
+    "name": "Palawan",
+    "best_for": [
+      "island hopping",
+      "beaches",
+      "nature"
+    ],
+    "highlights": [
+      "Coron island hopping",
+      "El Nido beach route",
+      "Puerto Princesa coastal drive",
+      "Sunset kayak loop"
+    ],
+    "transport_hints": [
+      "Island hopping is best booked early in the morning.",
+      "Coastal roads are slower in rain and during peak season.",
+      "Keep one buffer day for weather shifts and ferry timing."
+    ],
+    "base_daily_budget": 2100,
+    "areas": [
+      {
+        "name": "Coron",
+        "category": "Island Hopping",
+        "cost": 680,
+        "timing": "Morning",
+        "note": "Ideal for limestone island views, swims, and reef stops.",
+        "latitude": 12.0036,
+        "longitude": 120.2043
+      },
+      {
+        "name": "El Nido",
+        "category": "Beach",
+        "cost": 610,
+        "timing": "Late morning",
+        "note": "Beachfront route with cliffside and island-hopping options.",
+        "latitude": 11.1949,
+        "longitude": 119.4019
+      },
+      {
+        "name": "Puerto Princesa",
+        "category": "Coastal",
+        "cost": 470,
+        "timing": "Afternoon",
+        "note": "Coastal drive and underground river day for a slower pace.",
+        "latitude": 9.7392,
+        "longitude": 118.7353
+      },
+      {
+        "name": "Coastal Route",
+        "category": "Adventure",
+        "cost": 560,
+        "timing": "Midday",
+        "note": "Kayak and beach mix for an active but scenic route.",
+        "latitude": 11.15,
+        "longitude": 119.35
+      }
+    ]
+  }
+}
