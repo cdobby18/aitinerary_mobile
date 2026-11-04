@@ -246,6 +246,8 @@ def budget_agent(draft_days: List[PlannerDraft], brief: TripBrief):
         "manila": 1.2,
         "cebu": 1.0,
         "palawan": 1.35,
+        "tokyo": 4.5,
+        "singapore": 1.6,
     }.get((brief.region or "cebu").lower(), 1.0)
 
     traveler_multiplier = {
@@ -257,7 +259,8 @@ def budget_agent(draft_days: List[PlannerDraft], brief: TripBrief):
 
     accommodation = round(1800 * brief.days * region_multiplier * traveler_multiplier)
     food = round(900 * brief.days * region_multiplier * traveler_multiplier)
-    activities = round(brief.days * 750 * (1.1 if brief.region == "palawan" else 1.0))
+    activity_multiplier = 1.2 if brief.region in {"tokyo", "singapore"} else 1.1 if brief.region == "palawan" else 1.0
+    activities = round(brief.days * 750 * activity_multiplier)
     transport = round(sum(80 * 2 for _ in draft_days) * region_multiplier)
     total = accommodation + food + activities + transport
     return {
