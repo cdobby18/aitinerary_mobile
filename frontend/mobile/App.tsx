@@ -218,6 +218,7 @@ export default function App() {
   const [liveWeather, setLiveWeather] = useState<WeatherInfo | null>(null);
   const [forecastWeather, setForecastWeather] = useState<{ temp: number; rainChance: number } | null>(null);
   const [mapStatus, setMapStatus] = useState<'openstreetmap' | 'google' | 'error'>('openstreetmap');
+  const [isOnline, setIsOnline] = useState(true);
   const [savedTrips, setSavedTrips] = useState<any[]>([]);
   const [chatPrompt, setChatPrompt] = useState('Plan a 4-day Cebu trip for a couple with beaches and local food');
   const [chatLoading, setChatLoading] = useState(false);
@@ -297,6 +298,19 @@ export default function App() {
       headers: { Authorization: `Bearer ${token}` },
     });
   };
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+
+    const update = () => setIsOnline(window.navigator.onLine);
+    update();
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
 
   useEffect(() => {
     const fetchMapsConfig = async () => {
@@ -1305,6 +1319,14 @@ export default function App() {
   const renderPlanHome = () => (
     <>
       {renderDiscoverHeader()}
+      {!isOnline ? (
+        <View style={styles.offlineBanner}>
+          <Ionicons name="cloud-offline-outline" size={16} color={colors.warning} />
+          <AppText variant="caption" style={styles.offlineBannerText}>
+            You are offline. Saved trips and cached weather are still available.
+          </AppText>
+        </View>
+      ) : null}
       {renderDestinationRail()}
       {renderHero()}
       <View
@@ -2729,6 +2751,20 @@ const styles = StyleSheet.create({
     color: colors.muted,
     marginTop: 2,
     marginBottom: 6,
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.warningSoft,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  offlineBannerText: {
+    flex: 1,
+    color: colors.warning,
   },
   featureRow: {
     flexDirection: 'row',
