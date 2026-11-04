@@ -8,7 +8,7 @@ for suffix in ("", "-wal", "-shm", "-journal"):
         os.remove(db_path + suffix)
     except FileNotFoundError:
         pass
-os.environ["AITINERARY_DB_PATH"] = db_path
+os.environ["DATABASE_URL"] = f"sqlite:///{db_path}"
 
 from fastapi.testclient import TestClient
 

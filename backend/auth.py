@@ -1,74 +1,27 @@
 import hashlib
-import hmac
-import os
 import json
+import os
 import secrets
-import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-DB_PATH = Path(os.getenv("AITINERARY_DB_PATH", str(Path(__file__).resolve().parent / "aitinerary.db")))
+from sqlalchemy import select
+
+from backend.database import SessionLocal, User, Session, SavedTrip, init_db
+
 TOKEN_TTL_DAYS = 30
-
-
-def _connect() -> sqlite3.Connection:
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-def init_db() -> None:
-    with _connect() as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                email_verified INTEGER NOT NULL DEFAULT 0,
-                verification_token TEXT,
-                reset_token TEXT,
-                reset_expires_at TEXT
-            );
-
-            DROP TABLE IF EXISTS sessions;
-
-            CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users (id)
-            );
-
-            CREATE TABLE IF NOT EXISTS saved_trips (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                itinerary_json TEXT NOT NULL,
-                saved_at TEXT NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users (id)
-            );
-            """
-        )
-
-    for statement in (
-        "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE users ADD COLUMN verification_token TEXT",
-        "ALTER TABLE users ADD COLUMN reset_token TEXT",
-        "ALTER TABLE users ADD COLUMN reset_expires_at TEXT",
-    ):
-        try:
-            with _connect() as connection:
-                connection.execute(statement)
-        except sqlite3.OperationalError:
-            pass
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _naive(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def hash_password(password: str) -> str:
@@ -87,6 +40,8 @@ def verify_password(password: str, stored: str) -> bool:
     candidate = hashlib.pbkdf2_hmac(
         "sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000
     ).hex()
+    import hmac
+
     return hmac.compare_digest(candidate, digest)
 
 
@@ -97,48 +52,57 @@ def hash_token(token: str) -> str:
 def create_user(name: str, email: str, password: str) -> Dict[str, Any]:
     email = email.strip().lower()
     verification_token = secrets.token_urlsafe(32)
-    with _connect() as connection:
-        existing = connection.execute(
-            "SELECT id FROM users WHERE email = ?", (email,)
-        ).fetchone()
+    with SessionLocal() as db:
+        existing = db.scalar(select(User).where(User.email == email))
         if existing:
             raise ValueError("An account with this email already exists.")
 
-        cursor = connection.execute(
-            "INSERT INTO users (name, email, password_hash, created_at, verification_token) VALUES (?, ?, ?, ?, ?)",
-            (name.strip(), email, hash_password(password), _now().isoformat(), hash_token(verification_token)),
+        user = User(
+            name=name.strip(),
+            email=email,
+            password_hash=hash_password(password),
+            created_at=_now(),
+            verification_token=hash_token(verification_token),
         )
-        user_id = cursor.lastrowid
-    return {
-        "id": user_id,
-        "name": name.strip(),
-        "email": email,
-        "email_verified": False,
-        "verification_token": verification_token,
-    }
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "email_verified": bool(user.email_verified),
+            "verification_token": verification_token,
+        }
 
 
 def authenticate_user(email: str, password: str) -> Optional[Dict[str, Any]]:
     email = email.strip().lower()
-    with _connect() as connection:
-        row = connection.execute(
-            "SELECT id, name, email, password_hash FROM users WHERE email = ?",
-            (email,),
-        ).fetchone()
-    if not row or not verify_password(password, row["password_hash"]):
-        return None
-    return {"id": row["id"], "name": row["name"], "email": row["email"]}
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == email))
+        if not user or not verify_password(password, user.password_hash):
+            return None
+        return {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "email_verified": bool(user.email_verified),
+        }
 
 
 def create_session(user_id: int) -> str:
     token = secrets.token_urlsafe(32)
     created = _now()
     expires = created + timedelta(days=TOKEN_TTL_DAYS)
-    with _connect() as connection:
-        connection.execute(
-            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (hash_token(token), user_id, created.isoformat(), expires.isoformat()),
+    with SessionLocal() as db:
+        session = Session(
+            token_hash=hash_token(token),
+            user_id=user_id,
+            created_at=created,
+            expires_at=expires,
         )
+        db.add(session)
+        db.commit()
     return token
 
 
@@ -146,132 +110,79 @@ def get_user_for_token(token: str) -> Optional[Dict[str, Any]]:
     if not token:
         return None
     token_hash = hash_token(token)
-    with _connect() as connection:
-        row = connection.execute(
-            """
-            SELECT users.id, users.name, users.email, users.email_verified, sessions.expires_at
-            FROM sessions JOIN users ON users.id = sessions.user_id
-            WHERE sessions.token_hash = ?
-            """,
-            (token_hash,),
-        ).fetchone()
-    if not row:
-        return None
-    expires = datetime.fromisoformat(row["expires_at"])
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
-    if expires < _now():
-        revoke_session(token)
-        return None
-    new_expiry = _now() + timedelta(days=TOKEN_TTL_DAYS)
-    with _connect() as connection:
-        connection.execute(
-            "UPDATE sessions SET expires_at = ? WHERE token_hash = ?",
-            (new_expiry.isoformat(), token_hash),
-        )
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "email": row["email"],
-        "email_verified": bool(row["email_verified"]),
-    }
-
-
+    with SessionLocal() as db:
+        session = db.scalar(select(Session).where(Session.token_hash == token_hash))
+        if not session:
+            return None
+        expires = _naive(session.expires_at)
+        if expires < _now():
+            db.delete(session)
+            db.commit()
+            return None
+        user = db.scalar(select(User).where(User.id == session.user_id))
+        if not user:
+            db.delete(session)
+            db.commit()
+            return None
+        session.expires_at = _now() + timedelta(days=TOKEN_TTL_DAYS)
+        db.commit()
+        return {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "email_verified": bool(user.email_verified),
+        }
 
 
 def revoke_session(token: str) -> None:
-    with _connect() as connection:
-        connection.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
-
-
-def list_saved_trips(user_id: int) -> list:
-    with _connect() as connection:
-        rows = connection.execute(
-            "SELECT id, itinerary_json, saved_at FROM saved_trips WHERE user_id = ? ORDER BY id DESC",
-            (user_id,),
-        ).fetchall()
-    result = []
-    for row in rows:
-        try:
-            itinerary = json.loads(row["itinerary_json"])
-        except json.JSONDecodeError:
-            continue
-        result.append({"id": row["id"], "savedAt": row["saved_at"], "itinerary": itinerary})
-    return result
-
-
-def save_trip(user_id: int, itinerary: Dict[str, Any]) -> Dict[str, Any]:
-    saved_at = _now().isoformat()
-    with _connect() as connection:
-        cursor = connection.execute(
-            "INSERT INTO saved_trips (user_id, itinerary_json, saved_at) VALUES (?, ?, ?)",
-            (user_id, json.dumps(itinerary), saved_at),
-        )
-        trip_id = cursor.lastrowid
-    return {"id": trip_id, "savedAt": saved_at}
-
-
-def delete_saved_trip(user_id: int, trip_id: int) -> bool:
-    with _connect() as connection:
-        cursor = connection.execute(
-            "DELETE FROM saved_trips WHERE id = ? AND user_id = ?", (trip_id, user_id)
-        )
-        return cursor.rowcount > 0
-
+    token_hash = hash_token(token)
+    with SessionLocal() as db:
+        session = db.scalar(select(Session).where(Session.token_hash == token_hash))
+        if session:
+            db.delete(session)
+            db.commit()
 
 
 def verify_email_token(token: str) -> Optional[Dict[str, Any]]:
     token_hash = hash_token(token)
-    with _connect() as connection:
-        row = connection.execute(
-            "SELECT id, name, email FROM users WHERE verification_token = ?",
-            (token_hash,),
-        ).fetchone()
-        if not row:
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.verification_token == token_hash))
+        if not user:
             return None
-        connection.execute(
-            "UPDATE users SET email_verified = 1, verification_token = NULL WHERE id = ?",
-            (row["id"],),
-        )
-    return {"id": row["id"], "name": row["name"], "email": row["email"]}
+        user.email_verified = True
+        user.verification_token = None
+        db.commit()
+        return {"id": user.id, "name": user.name, "email": user.email}
 
 
 def create_password_reset(email: str) -> Optional[str]:
     email = email.strip().lower()
-    with _connect() as connection:
-        row = connection.execute(
-            "SELECT id FROM users WHERE email = ?", (email,)
-        ).fetchone()
-        if not row:
+    reset_token = secrets.token_urlsafe(32)
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == email))
+        if not user:
             return None
-        reset_token = secrets.token_urlsafe(32)
-        expires = _now() + timedelta(hours=1)
-        connection.execute(
-            "UPDATE users SET reset_token = ?, reset_expires_at = ? WHERE id = ?",
-            (hash_token(reset_token), expires.isoformat(), row["id"]),
-        )
+        user.reset_token = hash_token(reset_token)
+        user.reset_expires_at = _now() + timedelta(hours=1)
+        db.commit()
     return reset_token
 
 
 def reset_password(token: str, new_password: str) -> bool:
     token_hash = hash_token(token)
-    with _connect() as connection:
-        row = connection.execute(
-            "SELECT id, reset_expires_at FROM users WHERE reset_token = ?",
-            (token_hash,),
-        ).fetchone()
-        if not row:
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.reset_token == token_hash))
+        if not user:
             return False
-        expires = datetime.fromisoformat(row["reset_expires_at"])
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if expires < _now():
+        expires = _naive(user.reset_expires_at)
+        if expires is None or expires < _now():
             return False
-        connection.execute(
-            "UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires_at = NULL WHERE id = ?",
-            (hash_password(new_password), row["id"]),
-        )
-        connection.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+        user.password_hash = hash_password(new_password)
+        user.reset_token = None
+        user.reset_expires_at = None
+        # Revoke all sessions for this user.
+        db.query(Session).filter(Session.user_id == user.id).delete()
+        db.commit()
     return True
 
 
@@ -281,6 +192,41 @@ def refresh_session(old_token: str) -> Optional[str]:
         return None
     revoke_session(old_token)
     return create_session(user["id"])
+
+
+def list_saved_trips(user_id: int) -> list:
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(SavedTrip).where(SavedTrip.user_id == user_id).order_by(SavedTrip.id.desc())
+        ).all()
+        result = []
+        for row in rows:
+            try:
+                itinerary = json.loads(row.itinerary_json)
+            except json.JSONDecodeError:
+                continue
+            result.append({"id": row.id, "savedAt": row.saved_at.isoformat(), "itinerary": itinerary})
+        return result
+
+
+def save_trip(user_id: int, itinerary: Dict[str, Any]) -> Dict[str, Any]:
+    saved_at = _now()
+    with SessionLocal() as db:
+        trip = SavedTrip(user_id=user_id, itinerary_json=json.dumps(itinerary), saved_at=saved_at)
+        db.add(trip)
+        db.commit()
+        db.refresh(trip)
+        return {"id": trip.id, "savedAt": trip.saved_at.isoformat()}
+
+
+def delete_saved_trip(user_id: int, trip_id: int) -> bool:
+    with SessionLocal() as db:
+        trip = db.scalar(select(SavedTrip).where(SavedTrip.id == trip_id, SavedTrip.user_id == user_id))
+        if not trip:
+            return False
+        db.delete(trip)
+        db.commit()
+        return True
 
 
 init_db()
