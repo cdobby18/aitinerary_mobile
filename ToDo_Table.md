@@ -60,6 +60,7 @@ Build a region-aware Philippines-first beta trip planner that works as a mobile 
 - Better local attraction metadata by region
 - Map pin visualization
 - AI chat planner improvements (intent parsing, multi-turn context)
+- AI chat assistant (conversational travel bot) - Done
 - Risk / weather alert badges
 - Transit time and walking route realism
 - Multi-day route optimization

@@ -164,3 +164,8 @@
 - Improved regional budget realism and weather forecast support.
 - Added CI workflow and backend Dockerfile.
 - Updated design system and to-do tracking.
+
+## 2026-11-04 — Conversational AI assistant
+
+- Added a `/chat` backend endpoint with rule-based travel advice and itinerary generation.
+- Updated the mobile chat planner into a conversational message log.
