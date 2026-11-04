@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 
 import { colors } from './theme';
 import type { TripMapProps } from './mapTypes';
@@ -10,6 +10,7 @@ export default function TripMap({
   mode,
   center,
   selectedId,
+  googleKey,
   onSelectStop,
 }: TripMapProps) {
   const mapRef = useRef<MapView | null>(null);
@@ -32,6 +33,7 @@ export default function TripMap({
 
   return (
     <MapView
+      provider={googleKey ? PROVIDER_GOOGLE : undefined}
       ref={mapRef}
       style={StyleSheet.absoluteFill}
       initialRegion={{
