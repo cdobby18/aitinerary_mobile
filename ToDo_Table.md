@@ -11,19 +11,19 @@ Build a region-aware Philippines-first beta trip planner that works as a mobile 
 | P0 | Validate backend + AI orchestration | Done | API returns structured itinerary and risk data | Re-run smoke tests after any schema change |
 | P0 | Validate frontend and local API connectivity | Done | Expo app compiles and can fetch backend data | Keep local dev flow working |
 | P1 | Improve region realism for Cebu, Manila, and Palawan | In Progress | Local transport, budget, risk, and day themes are more realistic and location-specific | Add more destination-specific area and cost values |
-| P1 | Weather-aware trip planning | Done | Rainy-season logic and backup plan are integrated | Keep tuning for edge cases |
+| P1 | Weather-aware trip planning | Done | Live Open-Meteo current conditions and monthly forecast integrated | Keep tuning for edge cases |
 | P1 | Mobile UX polish and itinerary clarity | Done | Risk and backup plan are visible, with a premium dark mobile layout and form polish | Continue with realism and travel-data improvements |
 | P1 | Result screen polish | Done | Overview cards, layered itinerary layout, animated result state, and mobile interaction polish are in place | Add final data realism improvements and empty/loading states |
 | P1 | AI itinerary rationale and loading UX | Done | Result cards now show AI reasoning and better loading states for trip generation | Keep improving credibility and travel logic |
-| P1 | Add real destination data scripts and seeded local datasets | Planned | Philippines-first trip data scripts, attraction metadata, local cost assumptions, and region seed files | Create scripts and sample data for initial regions |
-| P1 | Add Google Maps API integration | Done | Web map uses OpenStreetMap by default and Google Maps JS when a key is present | Backend reports provider status; frontend switches automatically |
-| P1 | Add .env / secrets config for API keys | Done | Backend and frontend env files plus `.env.example` are in place | Keep secrets out of source control |
+| P1 | Add real destination data scripts and seeded local datasets | Done | Seed data and coordinates added for Philippines destinations | Expand for new countries |
+| P1 | Add Google Maps API integration | Done | Web and native provider support with optional API key | Add keys for production |
+| P1 | Add .env / secrets config for API keys | Done | Backend/frontend env files and examples are in place | Keep secrets out of source control |
 | P2 | Premium mobile experience enhancements | Done | Glassmorphism, dark luxury theme, layered cards, animated transitions, onboarding, and strong mobile interactions | Move to deeper realism and final UX validation |
-| P2 | Add deeper local data assumptions | In Progress | Realistic transport, attraction timing, and local costs | Build better region data config |
+| P2 | Add deeper local data assumptions | In Progress | Expanded stop sets, coordinates, and budgets for 5 destinations | Continue tuning |
 | P2 | Centralize destination config | Done | Region-specific stop metadata is in `backend/regions.py` | Reuse this pattern for future countries |
 | P2 | Add external API integrations | Planned | Weather, maps, and transport provider APIs | Integrate after MVP is stable |
-| P3 | Expand beyond Philippines beta | Planned | Prepare for Japan, Singapore, etc. | Add country abstraction layer |
-| P3 | Deploy and production readiness | Planned | Auth, env config, DB, logging, observability | After MVP stabilization |
+| P3 | Expand beyond Philippines beta | In Progress | Japan and Singapore region data and frontend picks added | Add UI grouping and more regions |
+| P3 | Deploy and production readiness | In Progress | Auth, env config, DB, logging, CI, and Docker added | Continue hardening |
 
 ## Ordered Roadmap
 
@@ -59,6 +59,7 @@ Build a region-aware Philippines-first beta trip planner that works as a mobile 
 ## Backlog
 - Better local attraction metadata by region
 - Map pin visualization
+- AI chat planner improvements (intent parsing, multi-turn context)
 - Risk / weather alert badges
 - Transit time and walking route realism
 - Multi-day route optimization

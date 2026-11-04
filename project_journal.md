@@ -148,3 +148,19 @@
 - Aligned the visual language with the design system described in `design.md`, including teals, coral CTAs, and card-based layout structure.
 - Kept the app behavior stable by preserving the same API and data model while improving the final presentation.
 - Verified the backend still produces valid itinerary output and the Expo app still compiles cleanly after the design refinement.
+
+## 2026-11-04 — Persistence, weather, map, assets, and tests
+
+- Added AsyncStorage persistence for saved trips, auth session, and onboarding state.
+- Added live weather via Open-Meteo with fallbacks and attribution.
+- Replaced the stylized map preview with a real OpenStreetMap/Leaflet map on web and react-native-maps on native, plus optional Google Maps.
+- Generated app icon, adaptive icon, splash, and favicon assets.
+- Added backend unittest suite and frontend typecheck scripts.
+
+## 2026-11-04 — Auth, hardening, database, multi-country, and CI
+
+- Implemented backend auth with SQLite/SQLAlchemy, bearer tokens, verification, password reset, refresh, and rate limiting.
+- Added multi-country support for Japan and Singapore.
+- Improved regional budget realism and weather forecast support.
+- Added CI workflow and backend Dockerfile.
+- Updated design system and to-do tracking.

@@ -28,6 +28,7 @@ from backend.auth import (
     save_trip,
     verify_email_token,
 )
+from backend.email import send_email
 from backend.countries import country_for_region, get_country, list_countries
 from backend.regions import get_destination_snapshot, get_region_profile, get_stop_profile
 
@@ -258,7 +259,16 @@ def signup(payload: Dict[str, Any]):
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     token = create_session(user["id"])
-    return {"token": token, "user": user, "verification_token": user.get("verification_token")}
+    verification_token = user.get("verification_token")
+    email_sent = send_email(
+        email,
+        "Verify your AITinerary account",
+        f"Welcome to AITinerary! Verify your account with this token: {verification_token}",
+    )
+    response = {"token": token, "user": user}
+    if not email_sent:
+        response["verification_token"] = verification_token
+    return response
 
 
 @app.post("/auth/login")
@@ -331,8 +341,17 @@ def forgot_password(payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Email is required.")
     rate_limit(f"forgot:{email}")
     token = create_password_reset(email)
-    # In production this token would be emailed, never returned.
-    return {"ok": True, "reset_token": token}
+    email_sent = False
+    if token:
+        email_sent = send_email(
+            email,
+            "Reset your AITinerary password",
+            f"Reset your password with this token: {token}",
+        )
+    response = {"ok": True}
+    if token and not email_sent:
+        response["reset_token"] = token
+    return response
 
 
 @app.post("/auth/reset-password")
