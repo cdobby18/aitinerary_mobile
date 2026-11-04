@@ -214,6 +214,7 @@ export default function App() {
   const [selectedStop, setSelectedStop] = useState<{ dayIndex: number; stopIndex: number } | null>(null);
   const [mapsConfig, setMapsConfig] = useState<any>(null);
   const [liveWeather, setLiveWeather] = useState<WeatherInfo | null>(null);
+  const [forecastWeather, setForecastWeather] = useState<{ temp: number; rainChance: number } | null>(null);
   const [mapStatus, setMapStatus] = useState<'openstreetmap' | 'google' | 'error'>('openstreetmap');
   const [savedTrips, setSavedTrips] = useState<any[]>([]);
   const [chatPrompt, setChatPrompt] = useState('Plan a 4-day Cebu trip for a couple with beaches and local food');
@@ -320,6 +321,7 @@ export default function App() {
     let active = true;
 
     setLiveWeather(null);
+    setForecastWeather(null);
 
     const fetchWeather = async () => {
       try {
@@ -344,7 +346,33 @@ export default function App() {
       }
     };
 
+    const fetchForecast = async () => {
+      try {
+        const url =
+          `https://api.open-meteo.com/v1/forecast?latitude=${coords.latitude}` +
+          `&longitude=${coords.longitude}&daily=temperature_2m_max,precipitation_probability_max&timezone=auto&forecast_days=7`;
+        const response = await fetch(url);
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const maxes = data?.daily?.temperature_2m_max;
+        const rains = data?.daily?.precipitation_probability_max;
+        if (!active || !Array.isArray(maxes) || maxes.length === 0) return;
+
+        const avgTemp = Math.round(
+          maxes.reduce((sum: number, value: number) => sum + Number(value || 0), 0) / maxes.length,
+        );
+        const rainChance = Array.isArray(rains)
+          ? Math.max(...rains.map((value: number) => Number(value || 0)))
+          : 0;
+        setForecastWeather({ temp: avgTemp, rainChance });
+      } catch {
+        // Keep the local fallback when the forecast service is unavailable.
+      }
+    };
+
     fetchWeather();
+    fetchForecast();
     return () => {
       active = false;
     };
@@ -654,7 +682,16 @@ export default function App() {
   const nativeMapAvailable = Platform.OS !== 'web' && Boolean(MapView) && Boolean(Marker);
   const activePick = destinationPicks.find(pick => pick.id === region) ?? destinationPicks[0];
   const activePhoto = photoForDestination(destination, region);
-  const activeWeather = liveWeather ?? fallbackWeather[region] ?? fallbackWeather.cebu;
+  const currentMonthName = new Date().toLocaleString('en-US', { month: 'long' });
+  const monthMatchesNow = month === currentMonthName;
+  const activeWeather =
+    monthMatchesNow && forecastWeather
+      ? {
+          temp: forecastWeather.temp,
+          label: `${forecastWeather.rainChance}% rain`,
+          icon: (forecastWeather.rainChance > 45 ? 'rainy-outline' : 'partly-sunny-outline') as WeatherInfo['icon'],
+        }
+      : liveWeather ?? fallbackWeather[region] ?? fallbackWeather.cebu;
   const tripDayCount = Number(days) || 0;
 
   const InlineError = ({ message }: { message: string }) => (
@@ -1278,7 +1315,7 @@ export default function App() {
       {renderChatPlanner()}
       {renderFeatures()}
       <AppText variant="caption" style={styles.attribution}>
-        Live weather by Open-Meteo
+        Weather and forecast by Open-Meteo
       </AppText>
     </>
   );
