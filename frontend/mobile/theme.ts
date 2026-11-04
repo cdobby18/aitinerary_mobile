@@ -59,6 +59,8 @@ export const photos = {
   manila: unsplash('photo-1518005020951-eccb494ad742'),
   palawan: unsplash('photo-1518509562904-e7ef99cdcc86'),
   bohol: unsplash('photo-1512100356356-de1b84283e18'),
+  tokyo: unsplash('photo-1540959733332-eab4deabeeaf'),
+  singapore: unsplash('photo-1525625293386-3f8f99389edd'),
   beach: unsplash('photo-1507525428034-b723cf961d3e'),
   beachQuiet: unsplash('photo-1439066615861-d1af74d74000'),
   sunset: unsplash('photo-1505228395891-9a51e7e86bf6'),
@@ -83,6 +85,8 @@ export const photoForDestination = (destination = '', region = '') => {
   if (key.includes('bohol') || key.includes('chocolate')) return photos.bohol;
   if (key.includes('manila') || key.includes('makati') || key.includes('bgc')) return photos.manila;
   if (key.includes('cebu') || key.includes('mactan') || key.includes('lapu')) return photos.cebu;
+  if (key.includes('tokyo') || key.includes('asakusa') || key.includes('shibuya') || key.includes('shinjuku')) return photos.tokyo;
+  if (key.includes('singapore') || key.includes('marina') || key.includes('chinatown')) return photos.singapore;
   return photos.beach;
 };
 
@@ -157,6 +161,24 @@ export const destinationPicks = [
     icon: 'leaf-outline' as const,
     coords: { latitude: 9.6479, longitude: 123.8551 },
   },
+  {
+    id: 'tokyo',
+    label: 'Tokyo',
+    mood: 'City + culture',
+    blurb: 'Temples, ramen, neon nights.',
+    photo: photos.tokyo,
+    icon: 'train-outline' as const,
+    coords: { latitude: 35.6762, longitude: 139.6503 },
+  },
+  {
+    id: 'singapore',
+    label: 'Singapore',
+    mood: 'Gardens + city',
+    blurb: 'Hawker food and skyline walks.',
+    photo: photos.singapore,
+    icon: 'business-outline' as const,
+    coords: { latitude: 1.3521, longitude: 103.8198 },
+  },
 ];
 
 export const heroHeadlines: Record<string, string> = {
@@ -164,4 +186,6 @@ export const heroHeadlines: Record<string, string> = {
   manila: 'A big city with\na softer side.',
   palawan: 'Lagoons worth\nslowing down for.',
   bohol: 'Green hills and\nquiet coastlines.',
+  tokyo: 'Neon nights and\ntemple mornings.',
+  singapore: 'Gardens, hawkers,\nand skyline walks.',
 };

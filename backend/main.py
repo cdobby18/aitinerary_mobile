@@ -47,6 +47,8 @@ REGION_CONFIG = {
     "manila": {"name": "Metro Manila", "rainy_months": ["June", "July", "August", "September"]},
     "cebu": {"name": "Cebu", "rainy_months": ["June", "July", "August", "September"]},
     "palawan": {"name": "Palawan", "rainy_months": ["June", "July", "August", "September", "October"]},
+    "tokyo": {"name": "Tokyo", "rainy_months": ["June", "July", "September"]},
+    "singapore": {"name": "Singapore", "rainy_months": ["November", "December", "January"]},
 }
 
 

@@ -11,16 +11,16 @@ COUNTRIES: Dict[str, Dict] = {
     "Japan": {
         "code": "JP",
         "currency": "JPY",
-        "status": "planned",
-        "regions": [],
-        "default_region": None,
+        "status": "active",
+        "regions": ["tokyo"],
+        "default_region": "tokyo",
     },
     "Singapore": {
         "code": "SG",
         "currency": "SGD",
-        "status": "planned",
-        "regions": [],
-        "default_region": None,
+        "status": "active",
+        "regions": ["singapore"],
+        "default_region": "singapore",
     },
 }
 

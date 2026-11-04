@@ -48,6 +48,30 @@ REGION_META: Dict[str, Dict[str, List[str]]] = {
         "weather_note": "Palawan is more weather-sensitive for ocean activities, so rough seas and rain can quickly change plans.",
         "local_hint": "Palawan performs best when the ocean-heavy jumps are staggered and one flexible half-day remains for weather shifts.",
     },
+    "tokyo": {
+        "themes": ["temples", "food", "city views", "shopping"],
+        "stops": [
+            "Asakusa Temple Walk",
+            "Tsukiji Outer Market",
+            "Shibuya Crossing Evening",
+            "Shinjuku Skyline View",
+        ],
+        "rainy_months": {"June", "July", "September"},
+        "weather_note": "Tokyo summers are humid with sudden showers; spring and autumn are milder.",
+        "local_hint": "Tokyo works best by neighborhood clusters with short metro hops between districts.",
+    },
+    "singapore": {
+        "themes": ["gardens", "food", "city walks", "culture"],
+        "stops": [
+            "Marina Bay Waterfront",
+            "Chinatown Food Walk",
+            "Gardens by the Bay",
+            "Little India Culture",
+        ],
+        "rainy_months": {"November", "December", "January"},
+        "weather_note": "Singapore has frequent short, heavy showers, especially in the afternoon.",
+        "local_hint": "Singapore is easiest by MRT with compact walks through each district.",
+    },
 }
 
 
@@ -165,6 +189,22 @@ def logistics_agent(draft_days: List[PlannerDraft], brief: TripBrief):
             "first_fare": 180,
             "second_eta": 20,
             "second_fare": 80,
+        },
+        "tokyo": {
+            "first_mode": "JR or metro",
+            "second_mode": "Short walk",
+            "first_eta": 18,
+            "first_fare": 220,
+            "second_eta": 10,
+            "second_fare": 0,
+        },
+        "singapore": {
+            "first_mode": "MRT",
+            "second_mode": "Short walk",
+            "first_eta": 15,
+            "first_fare": 30,
+            "second_eta": 8,
+            "second_fare": 0,
         },
     }
     profile = profile_map.get(region_key, profile_map["cebu"])

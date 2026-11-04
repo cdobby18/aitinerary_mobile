@@ -150,6 +150,8 @@ const fallbackWeather: Record<string, WeatherInfo> = {
   manila: { temp: 31, label: 'city heat', icon: 'sunny-outline' },
   palawan: { temp: 29, label: 'calm seas', icon: 'partly-sunny-outline' },
   bohol: { temp: 27, label: 'light breeze', icon: 'partly-sunny-outline' },
+  tokyo: { temp: 22, label: 'mild city', icon: 'cloud-outline' },
+  singapore: { temp: 31, label: 'humid', icon: 'partly-sunny-outline' },
 };
 
 const describeWeatherCode = (code: number): Pick<WeatherInfo, 'label' | 'icon'> => {
