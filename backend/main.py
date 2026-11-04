@@ -497,3 +497,44 @@ def chat_plan(payload: dict):
         "reply": f"Here’s a {brief.days}-day {brief.destination} plan tuned for {brief.travelers} travelers with a {brief.pace} pace.",
         "itinerary": itinerary,
     }
+
+
+def _chat_reply(message: str) -> dict:
+    lowered = message.lower()
+    planning_words = ("plan", "trip", "itinerary", "days", "visit", "travel")
+    if any(word in lowered for word in planning_words):
+        brief = _trip_brief_from_prompt(message)
+        itinerary = generate_trip(brief)
+        return {
+            "reply": f"I built a {brief.days}-day {brief.destination} itinerary for {brief.travelers} travelers at a {brief.pace} pace.",
+            "itinerary": itinerary,
+        }
+
+    if "weather" in lowered or "rain" in lowered:
+        return {
+            "reply": "I can’t fetch a live forecast for a future month yet, but I do factor rainy-season risk into every itinerary. Tell me a destination and month and I’ll plan around it.",
+        }
+    if "budget" in lowered or "cost" in lowered:
+        return {
+            "reply": "Budgets scale by destination and traveler type. Share your destination, days, and traveler count and I’ll estimate accommodation, food, activities, and transport.",
+        }
+    if "pack" in lowered or "what to bring" in lowered:
+        return {
+            "reply": "Pack light layers, comfortable walking shoes, a rain jacket in wet months, sunscreen, and a reusable water bottle. I can tailor this once you pick a destination and month.",
+        }
+    if "save" in lowered or "saved" in lowered:
+        return {
+            "reply": "You can save any generated itinerary with the Save button. Signed-in users keep them in their account; guests keep them on this device.",
+        }
+
+    return {
+        "reply": "I’m your travel planner. Tell me where, when, and who’s traveling, or ask about weather, budget, packing, or saved trips.",
+    }
+
+
+@app.post("/chat")
+def chat(payload: dict):
+    message = (payload or {}).get("message") or (payload or {}).get("prompt") or ""
+    if not message or not str(message).strip():
+        raise HTTPException(status_code=400, detail="Please provide a message.")
+    return _chat_reply(str(message))

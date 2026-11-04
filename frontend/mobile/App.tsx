@@ -222,6 +222,7 @@ export default function App() {
   const [savedTrips, setSavedTrips] = useState<any[]>([]);
   const [chatPrompt, setChatPrompt] = useState('Plan a 4-day Cebu trip for a couple with beaches and local food');
   const [chatLoading, setChatLoading] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('plan');
 
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
@@ -536,18 +537,23 @@ export default function App() {
   const handleChatPlan = async () => {
     if (!chatPrompt.trim()) return;
 
+    const userMessage = chatPrompt.trim();
+    setChatMessages(current => [...current, { role: 'user', text: userMessage }]);
+    setChatPrompt('');
     setChatLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/chat/plan`, {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: chatPrompt }),
+        body: JSON.stringify({ message: userMessage }),
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data?.detail || 'Unable to generate a trip from this prompt.');
+      if (!response.ok) throw new Error(data?.detail || 'Unable to answer right now.');
+
+      setChatMessages(current => [...current, { role: 'assistant', text: data.reply || 'Done.' }]);
 
       if (data?.itinerary) {
         setResult(data.itinerary);
@@ -555,7 +561,9 @@ export default function App() {
         scrollToTop();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      setError(message);
+      setChatMessages(current => [...current, { role: 'assistant', text: message }]);
     } finally {
       setChatLoading(false);
     }
@@ -1280,6 +1288,27 @@ export default function App() {
           <AppText variant="caption">Describe it the way you would tell a friend.</AppText>
         </View>
       </View>
+
+      {chatMessages.length ? (
+        <View style={styles.chatLog}>
+          {chatMessages.map((message, index) => (
+            <View
+              key={`${message.role}-${index}`}
+              style={[
+                styles.chatBubble,
+                message.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleAssistant,
+              ]}
+            >
+              <AppText
+                variant="bodySm"
+                style={message.role === 'user' ? styles.chatBubbleUserText : styles.chatBubbleAssistantText}
+              >
+                {message.text}
+              </AppText>
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       <TextInput
         style={[styles.input, styles.chatInput]}
@@ -2765,6 +2794,30 @@ const styles = StyleSheet.create({
   offlineBannerText: {
     flex: 1,
     color: colors.warning,
+  },
+  chatLog: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  chatBubble: {
+    maxWidth: '86%',
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  chatBubbleUser: {
+    alignSelf: 'flex-end',
+    backgroundColor: colors.forest,
+  },
+  chatBubbleAssistant: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surfaceAlt,
+  },
+  chatBubbleUserText: {
+    color: colors.white,
+  },
+  chatBubbleAssistantText: {
+    color: colors.ink,
   },
   featureRow: {
     flexDirection: 'row',
