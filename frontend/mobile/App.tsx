@@ -197,6 +197,34 @@ const formatNumber = (value: unknown) => {
 
 const formatPeso = (value: unknown) => `₱${formatNumber(value)}`;
 
+const CURRENCY_PREFIX: Record<string, string> = {
+  PHP: '₱',
+  JPY: '¥',
+  SGD: 'S$',
+  USD: '$',
+};
+
+const formatCost = (value: unknown, currency?: string | null) => {
+  const prefix = (currency && CURRENCY_PREFIX[currency]) || '₱';
+  return `${prefix}${formatNumber(value)}`;
+};
+
+const REGION_CURRENCY: Record<string, string> = {
+  manila: 'PHP',
+  cebu: 'PHP',
+  palawan: 'PHP',
+  tokyo: 'JPY',
+  singapore: 'SGD',
+  'metro manila': 'PHP',
+  japan: 'JPY',
+  tokyo_prefecture: 'JPY',
+};
+
+const regionCurrency = (region?: string | null) => {
+  if (!region) return null;
+  return REGION_CURRENCY[String(region).toLowerCase()] || null;
+};
+
 const smallPhoto = (uri: string) => uri.replace('w=1200', 'w=700');
 
 export default function App() {
@@ -625,7 +653,7 @@ export default function App() {
     const summaryText = [
       `AITinerary: ${result.destination}`,
       `${result.summary}`,
-      `Budget: ${formatPeso(result.total_budget)} • ${result.days?.length ?? 0} days`,
+      `Budget: ${formatCost(result.total_budget, regionCurrency(result?.region))} • ${result.days?.length ?? 0} days`,
       'Planned with local weather-aware route logic.',
     ].join('\n');
 
@@ -1421,6 +1449,7 @@ export default function App() {
 
   const renderDay = (day: any, dayIndex: number) => {
     const stops = day.stops || [];
+    const dayCurrency = stops.find((s: any) => s?.currency)?.currency;
     return (
       <Card key={`${day.day}-${dayIndex}`} padded={false} style={styles.dayCard}>
         <ImageBackground
@@ -1486,7 +1515,7 @@ export default function App() {
                       </AppText>
                       {leg.fare ? (
                         <AppText variant="caption" style={styles.transportFare}>
-                          {formatPeso(leg.fare)}
+                          {formatCost(leg.fare, dayCurrency)}
                         </AppText>
                       ) : null}
                     </View>
@@ -1535,6 +1564,29 @@ export default function App() {
                     <AppText variant="h3" style={styles.stopName}>
                       {stop.name}
                     </AppText>
+                    {stop.hours ? (
+                      <AppText variant="caption" style={styles.stopHours}>
+                        {stop.hours}
+                      </AppText>
+                    ) : null}
+                    {stop.notes ? (
+                      <AppText variant="bodySm" style={styles.stopDescription} numberOfLines={3}>
+                        {stop.notes}
+                      </AppText>
+                    ) : null}
+                    {stop.insider_tip ? (
+                      <View style={styles.tipRow}>
+                        <Ionicons name="bulb-outline" size={13} color={colors.teal} />
+                        <AppText variant="caption" style={styles.tipText} numberOfLines={3}>
+                          {stop.insider_tip}
+                        </AppText>
+                      </View>
+                    ) : null}
+                    {stop.cost ? (
+                      <AppText variant="caption" style={styles.stopCost}>
+                        ≈ {formatCost(stop.cost, stop.currency)}
+                      </AppText>
+                    ) : null}
                     <View style={styles.stopLocation}>
                       <Ionicons name="location-outline" size={13} color={colors.muted} />
                       <AppText variant="caption" style={styles.stopArea}>
@@ -1553,7 +1605,7 @@ export default function App() {
               <AppText variant="eyebrow">Estimated</AppText>
               <AppText variant="h3" style={styles.dayCost}>
                 {day.total_cost || day.estimated_cost
-                  ? formatPeso(day.total_cost ?? day.estimated_cost)
+                  ? formatCost(day.total_cost ?? day.estimated_cost, dayCurrency)
                   : 'Local route'}
               </AppText>
             </View>
@@ -1905,10 +1957,10 @@ export default function App() {
           <AppText variant="body">{result.summary}</AppText>
           <View style={styles.overlapDivider} />
           <View style={styles.statGrid}>
-            {renderStat('Budget', formatPeso(result.total_budget))}
+            {renderStat('Budget', formatCost(result.total_budget, regionCurrency(result?.region)))}
             {renderStat('Pace', pace)}
             {renderStat('Travelers', travelers)}
-            {renderStat('Left', formatPeso(result.remaining_budget), true)}
+            {renderStat('Left', formatCost(result.remaining_budget, regionCurrency(result?.region)), true)}
           </View>
         </Card>
 
@@ -1916,14 +1968,14 @@ export default function App() {
           <SectionHeader
             eyebrow="Where it goes"
             title="Budget snapshot"
-            meta={`${formatPeso(result.total_budget)} total`}
+            meta={`${formatCost(result.total_budget, regionCurrency(result?.region))} total`}
           />
           {budgetItems.map(item => (
             <View key={item.label} style={styles.budgetItem}>
               <View style={styles.budgetTop}>
                 <AppText variant="label">{item.label}</AppText>
                 <AppText variant="h3" style={styles.budgetValue}>
-                  {formatPeso(item.value)}
+                  {formatCost(item.value, regionCurrency(result?.region))}
                 </AppText>
               </View>
               <ProgressBar
@@ -2222,7 +2274,7 @@ export default function App() {
                 <View style={styles.libraryText}>
                   <AppText variant="h3">{trip.destination}</AppText>
                   <AppText variant="caption">
-                    {trip.days?.length ?? 0} days · {formatPeso(trip.total_budget)}
+                    {trip.days?.length ?? 0} days · {formatCost(trip.total_budget, regionCurrency(trip?.region))}
                   </AppText>
                 </View>
                 <Ionicons name="chevron-forward" size={16} color={colors.muted} />
@@ -3226,6 +3278,32 @@ const styles = StyleSheet.create({
   },
   stopName: {
     fontSize: 15,
+  },
+  stopHours: {
+    color: colors.muted,
+    marginTop: 2,
+  },
+  stopDescription: {
+    color: colors.ink,
+    marginTop: 4,
+  },
+  tipRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    marginTop: 6,
+  },
+  tipText: {
+    flex: 1,
+    color: colors.teal,
+  },
+  stopCost: {
+    marginTop: 4,
+    color: colors.muted,
   },
   stopLocation: {
     flexDirection: 'row',

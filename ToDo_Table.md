@@ -111,3 +111,9 @@ Build a region-aware Philippines-first beta trip planner that works as a mobile 
 | Add map config scaffolding | Done | Create env examples and backend map config so Google Maps API can be plugged in cleanly without hardcoding secrets |
 | Update mobile map state | Done | Have the mobile UI read maps config and show live status in the floating map card |
 | Validate API and app flow | Done | Run backend smoke tests for the new config endpoint and confirm the app still renders cleanly |
+
+## Accurate tours milestone (2026-11-04)
+- Curated tour knowledge base (5 destinations) — Done
+- Accurate fees, hours, durations, insider tips in itineraries — Done
+- Tour-aware chatbot with cross-region place attribution — Done
+- Currency-aware costs in the mobile UI — Done

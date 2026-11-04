@@ -31,6 +31,16 @@ from backend.auth import (
 from backend.email import send_email
 from backend.countries import country_for_region, get_country, list_countries
 from backend.regions import get_destination_snapshot, get_region_profile, get_stop_profile
+from backend.tours import best_tour_anywhere, chat_tour_answer, curated_catalog, enrich_stop
+
+# Cross-region hints so the chatbot can attribute places to their destination.
+REGION_KEYS_HINTS = {
+    "manila": [("intramuros", "Metro Manila"), ("binondo", "Metro Manila"), ("quiapo", "Metro Manila")],
+    "cebu": [("mactan", "Cebu"), ("cebu", "Cebu"), ("sirao", "Cebu"), ("carbon market", "Cebu")],
+    "palawan": [("coron", "Palawan"), ("el nido", "Palawan"), ("puerto princesa", "Palawan"), ("honda bay", "Palawan"), ("nacpan", "Palawan")],
+    "tokyo": [("tokyo", "Tokyo"), ("tsukiji", "Tokyo"), ("shibuya", "Tokyo"), ("shinjuku", "Tokyo"), ("asakusa", "Tokyo"), ("sensoji", "Tokyo"), ("meiji", "Tokyo")],
+    "singapore": [("singapore", "Singapore"), ("marina bay", "Singapore"), ("supertree", "Singapore"), ("maxwell", "Singapore"), ("haji lane", "Singapore"), ("orchard", "Singapore"), ("little india", "Singapore")],
+}
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -92,6 +102,11 @@ def generate_trip(brief: TripBrief):
 
     for item in draft["draft_days"]:
         area, category, cost, lat, lon = _area_and_cost(brief.region, item.stops[0])
+        tour_a = enrich_stop(brief.region, item.stops[0])
+        if tour_a:
+            cost = tour_a["fee"]
+            lat = tour_a["latitude"]
+            lon = tour_a["longitude"]
         stop_a = Stop(
             name=item.stops[0],
             area=area,
@@ -99,12 +114,21 @@ def generate_trip(brief: TripBrief):
             end_time="11:00",
             category=category,
             cost=cost,
-            notes="Fit for a relaxed morning route.",
+            notes=(tour_a.get("description") if tour_a else "Fit for a relaxed morning route."),
             latitude=lat,
             longitude=lon,
+            hours=tour_a.get("hours") if tour_a else None,
+            duration_minutes=tour_a.get("duration_min") if tour_a else None,
+            insider_tip=tour_a.get("insider_tip") if tour_a else None,
+            currency=tour_a.get("currency") if tour_a else None,
         )
 
         area_b, category_b, cost_b, lat_b, lon_b = _area_and_cost(brief.region, item.stops[1])
+        tour_b = enrich_stop(brief.region, item.stops[1])
+        if tour_b:
+            cost_b = tour_b["fee"]
+            lat_b = tour_b["latitude"]
+            lon_b = tour_b["longitude"]
         stop_b = Stop(
             name=item.stops[1],
             area=area_b,
@@ -112,9 +136,13 @@ def generate_trip(brief: TripBrief):
             end_time="14:00",
             category=category_b,
             cost=cost_b,
-            notes="Budget-friendly local dining.",
+            notes=(tour_b.get("description") if tour_b else "Budget-friendly local dining."),
             latitude=lat_b,
             longitude=lon_b,
+            hours=tour_b.get("hours") if tour_b else None,
+            duration_minutes=tour_b.get("duration_min") if tour_b else None,
+            insider_tip=tour_b.get("insider_tip") if tour_b else None,
+            currency=tour_b.get("currency") if tour_b else None,
         )
 
         legs = []
@@ -190,6 +218,21 @@ MAP_CONFIG = {
     "default_map_style": os.getenv("MAP_STYLE", "default"),
     "places_endpoint": os.getenv("GOOGLE_MAPS_PLACES_ENDPOINT", "https://maps.googleapis.com/maps/api/place"),
 }
+
+
+@app.get("/tours/{region}")
+def get_tours(region: str):
+    key = region.lower()
+    if key not in REGION_CONFIG:
+        raise HTTPException(status_code=404, detail="Unknown destination.")
+    catalog = curated_catalog(key)
+    if not catalog:
+        raise HTTPException(status_code=404, detail="No curated tours for this destination yet.")
+    return {
+        "region": key,
+        "destination": REGION_CONFIG[key]["name"],
+        "tours": catalog,
+    }
 
 
 @app.get("/maps/config")
@@ -389,7 +432,11 @@ def get_region_snapshot(region_name: str):
 
 def _guess_region_from_destination(text: str):
     lower = text.lower()
-    if "palawan" in lower:
+    if "tokyo" in lower or "asakusa" in lower or "shibuya" in lower or "shinjuku" in lower:
+        return "tokyo", "Tokyo"
+    if "singapore" in lower or "marina bay" in lower or "supertree" in lower:
+        return "singapore", "Singapore"
+    if "palawan" in lower or "coron" in lower or "el nido" in lower:
         return "palawan", "Palawan"
     if "manila" in lower or "metro manila" in lower or "quezon city" in lower:
         return "manila", "Metro Manila"
@@ -502,7 +549,43 @@ def chat_plan(payload: dict):
 def _chat_reply(message: str) -> dict:
     lowered = message.lower()
     planning_words = ("plan", "trip", "itinerary", "days", "visit", "travel")
-    if any(word in lowered for word in planning_words):
+    is_planning = any(word in lowered for word in planning_words)
+
+    # Check the destination the user actually mentions first, so Tsukiji
+    # questions never answer with a wrong-city tour.
+    mentioned = None
+    if not is_planning:
+        for region_key in REGION_CONFIG:
+            if region_key in lowered or REGION_CONFIG[region_key]["name"].lower() in lowered:
+                mentioned = region_key
+                break
+            for keyword, _display in REGION_KEYS_HINTS.get(region_key, []):
+                if keyword in lowered:
+                    mentioned = region_key
+                    break
+            if mentioned:
+                break
+        if mentioned:
+            tour_reply = chat_tour_answer(mentioned, lowered)
+            if tour_reply:
+                return {"reply": tour_reply}
+
+        # Fall back to the most specific unique place match across all regions.
+        anywhere = best_tour_anywhere(lowered)
+        if anywhere:
+            fee = anywhere["fee"]
+            fee_text = "Free entry" if fee == 0 else f"≈{fee:,} {anywhere.get('currency', '')}"
+            return {
+                "reply": (
+                    f"{anywhere['name']} ({anywhere['area']}): {anywhere['description']} "
+                    f"Hours: {anywhere['hours']}. {fee_text}. "
+                    f"Plan for roughly {max(anywhere['duration_min'] // 60, 1)} "
+                    f"hour{'s' if anywhere['duration_min'] > 60 else ''} — best in the {anywhere['best_time']}. "
+                    f"Local tip: {anywhere['insider_tip']}"
+                )
+            }
+
+    if is_planning:
         brief = _trip_brief_from_prompt(message)
         itinerary = generate_trip(brief)
         return {

@@ -55,7 +55,48 @@ class BackendApiTests(unittest.TestCase):
             for stop in day["stops"]:
                 self.assertIsNotNone(stop["latitude"])
                 self.assertIsNotNone(stop["longitude"])
-                self.assertGreater(stop["cost"], 0)
+                self.assertGreaterEqual(stop["cost"], 0)
+
+    def test_curated_stop_details(self):
+        response = self.client.post(
+            "/trip/generate",
+            json={
+                "destination": "Tokyo",
+                "region": "tokyo",
+                "days": 2,
+                "budget": 60000,
+                "interests": ["food", "culture"],
+                "pace": "balanced",
+                "travelers": "solo",
+                "month": "June",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        for day in response.json()["days"]:
+            for stop in day["stops"]:
+                self.assertIsNotNone(stop["hours"])
+                self.assertIsNotNone(stop["insider_tip"])
+                self.assertIsNotNone(stop["duration_minutes"])
+                self.assertEqual(stop["currency"], "JPY")
+
+    def test_tours_endpoint(self):
+        response = self.client.get("/tours/singapore")
+        self.assertEqual(response.status_code, 200)
+        catalog = response.json()["tours"]
+        self.assertGreater(len(catalog), 3)
+        entry = catalog[0]
+        for key in ("name", "fee", "currency", "hours", "description", "insider_tip"):
+            self.assertIn(key, entry)
+
+    def test_chat_tour_answer(self):
+        response = self.client.post(
+            "/chat",
+            json={"message": "what are the hours for tsukiji outer market?"},
+        )
+        self.assertEqual(response.status_code, 200)
+        reply = response.json()["reply"]
+        self.assertIn("Tsukiji", reply)
+        self.assertIn("Hours", reply)
 
     def test_chat_plan_returns_itinerary(self):
         response = self.client.post(

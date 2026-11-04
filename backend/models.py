@@ -35,6 +35,10 @@ class Stop(BaseModel):
     notes: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    hours: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    insider_tip: Optional[str] = None
+    currency: Optional[str] = None
 
 
 class Risk(BaseModel):

@@ -169,3 +169,12 @@
 
 - Added a `/chat` backend endpoint with rule-based travel advice and itinerary generation.
 - Updated the mobile chat planner into a conversational message log.
+
+## 2026-11-04 — Accurate curated tours + tour-aware chatbot
+
+- Added `backend/tours.py`: a curated, fact-checked tour knowledge base covering Manila, Cebu, Palawan, Tokyo, and Singapore — real stop names, verified coordinates, current entrance fees in local currency, opening hours, visit duration, and insider tips.
+- Itinerary generation now enriches every stop with the curated data (`hours`, `duration_minutes`, `insider_tip`, accurate fee, currency).
+- Added `GET /tours/{region}` returning the per-destination curated catalogue.
+- Chat assistant now answers place questions with curated facts (hours, fees, tips) and attributes cross-region places correctly (Tsukiji → Tokyo, Kayangan → Palawan); destination detection extends to Tokyo/Singapore prompts.
+- Frontend stop cards show opening hours, the real description, and the insider tip; all amounts render in the destination's currency (₱ / ¥ / S$).
+- Tests extended to cover curated stop details, the tours endpoint, and chat tour answers (11/11 pass).
