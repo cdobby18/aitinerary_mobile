@@ -4,6 +4,7 @@ import {
   Animated,
   Image,
   ImageBackground,
+  KeyboardAvoidingView,
   Linking,
   Platform,
   SafeAreaView,
@@ -27,15 +28,11 @@ import {
   Inter_800ExtraBold,
 } from '@expo-google-fonts/inter';
 import {
-  PlayfairDisplay_600SemiBold,
-  PlayfairDisplay_600SemiBold_Italic,
-  PlayfairDisplay_700Bold,
-} from '@expo-google-fonts/playfair-display';
-import {
   AppText,
   BottomNav,
   Button,
   Card,
+  Chip,
   EmptyState,
   Field,
   IconBadge,
@@ -98,7 +95,79 @@ type StoredSession = {
   token?: string;
 };
 
-type TabKey = 'plan' | 'saved' | 'insights' | 'profile';
+type TabKey = 'home' | 'trips' | 'explore' | 'profile';
+
+// Hardcoded feeds — later these come from backend endpoints
+// (see ToDo_Table.md: destination search/suggest, notifications, curated collections).
+type AppNotification = { id: string; icon: string; title: string; text: string; time: string };
+
+const appNotifications: AppNotification[] = [
+  {
+    id: 'weather',
+    icon: 'rainy-outline',
+    title: 'Rain window Wednesday',
+    text: 'Your afternoon stops move indoors — backup plan is already in the day card.',
+    time: '2h ago',
+  },
+  {
+    id: 'season',
+    icon: 'sunny-outline',
+    title: 'Best month to visit Cebu',
+    text: 'March to May gives you the calmest seas for island hopping.',
+    time: '1d ago',
+  },
+  {
+    id: 'welcome',
+    icon: 'sparkles-outline',
+    title: 'Welcome to AITinerary',
+    text: 'Start with a destination, and we will shape the route around your budget and pace.',
+    time: '3d ago',
+  },
+];
+
+const exploreCategories = [
+  { id: 'all', label: 'All', icon: 'grid-outline' as const },
+  { id: 'beaches', label: 'Beaches & Islands', icon: 'water-outline' as const },
+  { id: 'nature', label: 'Nature & Adventure', icon: 'leaf-outline' as const },
+  { id: 'food', label: 'Food & Culture', icon: 'restaurant-outline' as const },
+  { id: 'city', label: 'City Breaks', icon: 'business-outline' as const },
+  { id: 'family', label: 'Family-Friendly', icon: 'happy-outline' as const },
+];
+
+// Lightweight curation: which categories fit each destination pick.
+const destinationCategoryMap: Record<string, string[]> = {
+  cebu: ['beaches', 'nature', 'family'],
+  manila: ['food', 'city'],
+  palawan: ['beaches', 'nature'],
+  bohol: ['beaches', 'nature', 'family'],
+  tokyo: ['food', 'city'],
+  singapore: ['food', 'city', 'family'],
+};
+
+const curatedCollections = [
+  {
+    id: 'slow-coast',
+    title: 'Slow coastal escapes',
+    text: 'Quiet coves and unhurried days.',
+    photo: photos.palawan,
+    picks: ['palawan', 'bohol'],
+  },
+  {
+    id: 'food-city',
+    title: 'Eat your way through the city',
+    text: 'Hawker stalls, markets, late tables.',
+    photo: photos.food,
+    picks: ['manila', 'singapore', 'tokyo'],
+  },
+];
+
+const suggestedPrompts = [
+  'Plan a 3-day trip within my budget.',
+  'Make tomorrow less tiring.',
+  'Find indoor alternatives if it rains.',
+  'Explain how to get to this destination.',
+  'Replace this activity with something family-friendly.',
+];
 
 type TripBrief = {
   destination: string;
@@ -251,7 +320,21 @@ export default function App() {
   const [chatPrompt, setChatPrompt] = useState('Plan a 4-day Cebu trip for a couple with beaches and local food');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
-  const [activeTab, setActiveTab] = useState<TabKey>('plan');
+  const [activeTab, setActiveTab] = useState<TabKey>('home');
+
+  // Focused flows — each hides the bottom tab bar while active.
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planStep, setPlanStep] = useState(0);
+  const [viewingTrip, setViewingTrip] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
+  const [exploreQuery, setExploreQuery] = useState('');
+  const [exploreCategory, setExploreCategory] = useState('all');
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(appNotifications.length);
+  const [homeSearch, setHomeSearch] = useState('');
+  const [homeNotice, setHomeNotice] = useState<string | null>(null);
 
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -275,9 +358,6 @@ export default function App() {
     Inter_600SemiBold,
     Inter_700Bold,
     Inter_800ExtraBold,
-    PlayfairDisplay_600SemiBold,
-    PlayfairDisplay_700Bold,
-    PlayfairDisplay_600SemiBold_Italic,
   });
 
   const isTripSaved = Boolean(
@@ -490,6 +570,52 @@ export default function App() {
 
   const changeTab = (tab: TabKey) => {
     setActiveTab(tab);
+    setPlanOpen(false);
+    setAssistantOpen(false);
+    setViewingTrip(false);
+    scrollToTop();
+  };
+
+  // Focused-flow helpers. Plan Trip, the itinerary view, and the AI assistant
+  // hide the bottom tab bar per the mobile design spec (§4).
+  const openPlanFlow = (presetDestination?: string) => {
+    if (presetDestination) {
+      const pick = destinationPicks.find(
+        item => item.label.toLowerCase() === presetDestination.trim().toLowerCase(),
+      );
+      setDestination(pick ? pick.label : presetDestination.trim());
+      if (pick) setRegion(pick.id);
+    }
+    setPlanStep(0);
+    setPlanOpen(true);
+    setViewingTrip(false);
+    setAssistantOpen(false);
+    scrollToTop();
+  };
+
+  const openAssistant = (tripContext?: string) => {
+    if (tripContext && !chatPrompt) setChatPrompt(tripContext);
+    setAssistantOpen(true);
+    setPlanOpen(false);
+    setViewingTrip(false);
+    scrollToTop();
+  };
+
+  const closeFlows = () => {
+    setPlanOpen(false);
+    setAssistantOpen(false);
+    setViewingTrip(false);
+    changeTab('home');
+  };
+
+  const openTrip = (trip: any) => {
+    setResult(trip);
+    setSelectedDayIndex(0);
+    setMapExpanded(false);
+    setSelectedStop(null);
+    setPlanOpen(false);
+    setAssistantOpen(false);
+    setViewingTrip(true);
     scrollToTop();
   };
 
@@ -519,7 +645,10 @@ export default function App() {
     setAuthEmail('');
     setAuthPassword('');
     setAuthToken(null);
-    setActiveTab('plan');
+    setActiveTab('home');
+    setPlanOpen(false);
+    setAssistantOpen(false);
+    setViewingTrip(false);
     AsyncStorage.removeItem(STORAGE_KEYS.session).catch(() => {});
   };
 
@@ -553,19 +682,30 @@ export default function App() {
       }
 
       setResult(data);
-      setActiveTab('plan');
+      setSelectedDayIndex(0);
+      setMapExpanded(false);
+      setSelectedStop(null);
+      // Jump into the focused itinerary view with honest progress feedback.
+      setPlanOpen(false);
+      setViewingTrip(true);
       scrollToTop();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      const message =
+        err instanceof TypeError && /fetch|network/i.test(err.message)
+          ? "Can't reach the planner service. Check the backend is running and try again."
+          : err instanceof Error
+            ? err.message
+            : 'Unknown error';
+      setError(message);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleChatPlan = async () => {
-    if (!chatPrompt.trim()) return;
+  const sendPrompt = async (raw: string) => {
+    if (!raw.trim()) return;
 
-    const userMessage = chatPrompt.trim();
+    const userMessage = raw.trim();
     setChatMessages(current => [...current, { role: 'user', text: userMessage }]);
     setChatPrompt('');
     setChatLoading(true);
@@ -584,17 +724,24 @@ export default function App() {
       setChatMessages(current => [...current, { role: 'assistant', text: data.reply || 'Done.' }]);
 
       if (data?.itinerary) {
-        setResult(data.itinerary);
-        setActiveTab('plan');
-        scrollToTop();
+        openTrip(data.itinerary);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const message =
+        err instanceof TypeError && /fetch|network/i.test(err.message)
+          ? "Can't reach the assistant right now. Check the backend is running and try again."
+          : err instanceof Error
+            ? err.message
+            : 'Unknown error';
       setError(message);
       setChatMessages(current => [...current, { role: 'assistant', text: message }]);
     } finally {
       setChatLoading(false);
     }
+  };
+
+  const handleChatPlan = async () => {
+    await sendPrompt(chatPrompt);
   };
 
   const handleAuthSubmit = async () => {
@@ -715,8 +862,7 @@ export default function App() {
   };
 
   const openSavedTrip = (trip: any) => {
-    setResult(trip);
-    changeTab('plan');
+    openTrip(trip);
   };
 
   const toggleVibe = (option: string) => {
@@ -755,32 +901,6 @@ export default function App() {
     </View>
   );
 
-  const renderTopBar = () => (
-    <View style={styles.topBar}>
-      <View style={styles.brandRow}>
-        <View style={styles.brandMark}>
-          <Ionicons name="compass" size={19} color={colors.cream} />
-        </View>
-        <View>
-          <AppText style={styles.brand}>AITinerary</AppText>
-          <AppText variant="eyebrow" style={styles.subBrand}>
-            Philippines, thoughtfully planned
-          </AppText>
-        </View>
-      </View>
-
-      <TouchableOpacity
-        activeOpacity={0.85}
-        style={styles.avatarButton}
-        accessibilityRole="button"
-        accessibilityLabel="Sign out"
-        onPress={handleSignOut}
-      >
-        <AppText style={styles.avatarInitial}>{(authName || 'A').charAt(0).toUpperCase()}</AppText>
-      </TouchableOpacity>
-    </View>
-  );
-
   const renderOnboarding = () => {
     const slide = onboardingSlides[onboardingIndex];
     const isLast = onboardingIndex === onboardingSlides.length - 1;
@@ -797,7 +917,7 @@ export default function App() {
             <View style={styles.onboardingInner}>
               <View style={styles.onboardingBrand}>
                 <View style={styles.brandMarkLight}>
-                  <Ionicons name="compass" size={20} color={colors.forestDeep} />
+                  <Ionicons name="compass" size={20} color={colors.cream} />
                 </View>
                 <AppText style={styles.onboardingBrandText}>AITinerary</AppText>
               </View>
@@ -875,7 +995,7 @@ export default function App() {
           <View style={styles.authHeroContent}>
             <View style={styles.authBrandRow}>
               <View style={styles.brandMarkLight}>
-                <Ionicons name="compass" size={20} color={colors.forestDeep} />
+                <Ionicons name="compass" size={20} color={colors.cream} />
               </View>
               <AppText style={styles.onboardingBrandText}>AITinerary</AppText>
             </View>
@@ -987,395 +1107,428 @@ export default function App() {
     </ScrollView>
   );
 
-  const renderDiscoverHeader = () => (
-    <View style={styles.discoverHeader}>
-      <AppText variant="eyebrow">Discover</AppText>
-      <AppText variant="display" style={styles.discoverTitle}>
-        Where to next?
-      </AppText>
-      <AppText variant="body" style={styles.discoverText}>
-        Routes shaped around real weather, local rhythm, and the way you like to travel.
-      </AppText>
-    </View>
-  );
+  const startSearch = (value: string) => {
+    const term = value.trim();
+    if (!term) return;
+    const pick = destinationPicks.find(item => item.label.toLowerCase() === term.toLowerCase());
+    if (pick) {
+      setRegion(pick.id);
+      setDestination(pick.label);
+    } else {
+      const regionMatch = destinationPicks.find(item => term.toLowerCase().includes(item.id));
+      if (regionMatch) setRegion(regionMatch.id);
+      setDestination(term);
+    }
+    setRecentSearches(current => [term, ...current.filter(item => item !== term)].slice(0, 4));
+    setExploreQuery(term);
+    openPlanFlow();
+  };
 
-  const renderDestinationRail = () => (
-    <View style={styles.railWrap}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.railContent}
-      >
-        {destinationPicks.map(pick => {
-          const selected = region === pick.id;
-          return (
-            <TouchableOpacity
-              key={pick.id}
-              activeOpacity={0.9}
-              style={[styles.destCard, selected && styles.destCardActive]}
-              onPress={() => {
-                setRegion(pick.id);
-                setDestination(pick.label);
-              }}
-            >
-              <ImageBackground
-                source={{ uri: smallPhoto(pick.photo) }}
-                style={styles.destPhoto}
-                imageStyle={styles.destPhotoImage}
-              >
-                <LinearGradient
-                  colors={['rgba(18,30,21,0.02)', 'rgba(18,30,21,0.8)']}
-                  style={StyleSheet.absoluteFill}
-                />
-                <View style={styles.destTop}>
-                  {selected ? (
-                    <View style={styles.destCheck}>
-                      <Ionicons name="checkmark" size={13} color={colors.forestDeep} />
-                    </View>
-                  ) : (
-                    <View style={styles.destTag}>
-                      <Ionicons name={pick.icon} size={12} color={colors.white} />
-                    </View>
-                  )}
-                </View>
-                <View style={styles.destBottom}>
-                  <AppText variant="h3" style={styles.destName}>
-                    {pick.label}
-                  </AppText>
-                  <AppText variant="caption" style={styles.destMood}>
-                    {pick.mood}
-                  </AppText>
-                </View>
-              </ImageBackground>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    </View>
-  );
+  const openDestination = (pick: (typeof destinationPicks)[number]) => {
+    setRegion(pick.id);
+    setDestination(pick.label);
+    setRecentSearches(current =>
+      [pick.label, ...current.filter(item => item !== pick.label)].slice(0, 4),
+    );
+    setExploreQuery(pick.label);
+    openPlanFlow();
+  };
 
-  const renderHero = () => (
-    <ImageBackground source={{ uri: activePhoto }} style={styles.hero} imageStyle={styles.heroImage}>
-      <LinearGradient
-        colors={['rgba(18,30,21,0.04)', 'rgba(18,30,21,0.24)', 'rgba(18,30,21,0.88)']}
-        locations={[0, 0.4, 1]}
-        style={StyleSheet.absoluteFill}
-      />
-      <View style={styles.heroTop}>
-        <View style={styles.heroPill}>
-          <View style={styles.liveDot} />
-          <AppText variant="eyebrow" style={styles.heroPillText}>
-            Featured route
-          </AppText>
-        </View>
-        <View style={styles.heroPill}>
-          <Ionicons name="calendar-outline" size={13} color={colors.white} />
-          <AppText variant="eyebrow" style={styles.heroPillText}>
-            {month}
-          </AppText>
-        </View>
-      </View>
+  const markNotificationsRead = () => {
+    setUnreadCount(0);
+  };
 
-      <View style={styles.heroBottom}>
-        <AppText variant="hero" style={styles.heroTitle}>
-          {heroHeadlines[region] || 'A route with room to breathe.'}
-        </AppText>
-        <AppText variant="bodySm" style={styles.heroSubtitle}>
-          {activePick.blurb}
-        </AppText>
-        <View style={styles.heroMetaRow}>
-          <MetaItem light icon="location-outline" label={`${destination}`} />
-          <MetaItem light icon="calendar-outline" label={`${tripDayCount} days`} />
-          <MetaItem
-            light
-            icon={activeWeather.icon}
-            label={`${activeWeather.temp}° ${activeWeather.label}`}
-          />
-        </View>
-        <TouchableOpacity activeOpacity={0.9} style={styles.heroCta} onPress={scrollToForm}>
-          <AppText variant="label" style={styles.heroCtaText}>
-            Start planning
-          </AppText>
-          <Ionicons name="arrow-down" size={15} color={colors.forestDeep} />
+  const renderNotificationsPanel = () => (
+    <Card style={styles.notifPanel}>
+      <View style={styles.notifHead}>
+        <AppText variant="h3">Notifications</AppText>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => setNotificationsOpen(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Close notifications"
+          style={styles.notifClose}
+        >
+          <Ionicons name="close" size={18} color={colors.muted} />
         </TouchableOpacity>
       </View>
-    </ImageBackground>
-  );
-
-  const renderTripBrief = () => (
-    <View style={styles.plannerCard}>
-      <View style={styles.plannerHead}>
-        <View style={styles.plannerHeadText}>
-          <AppText variant="eyebrow">Smart planner</AppText>
-          <AppText variant="h1" style={styles.plannerTitle}>
-            Say it simply.
+      {appNotifications.map((item, index) => (
+        <View
+          key={item.id}
+          style={[styles.notifRow, index > 0 && styles.notifRowBorder, index >= unreadCount && styles.notifRowRead]}
+        >
+          <IconBadge name={item.icon as React.ComponentProps<typeof Ionicons>['name']} tone="teal" size={38} />
+          <View style={styles.notifBody}>
+            <AppText variant="label">{item.title}</AppText>
+            <AppText variant="caption">{item.text}</AppText>
+          </View>
+          <AppText variant="caption" style={styles.notifTime}>
+            {item.time}
           </AppText>
-          <AppText variant="bodySm" style={styles.plannerIntro}>
-            Four answers shape the route. The rest we work out.
-          </AppText>
-        </View>
-        <View style={styles.plannerBadge}>
-          <AppText variant="caption" style={styles.plannerBadgeText}>
-            2 min
-          </AppText>
-        </View>
-      </View>
-
-      <View style={styles.plannerBlock}>
-        <AppText variant="eyebrow" style={styles.plannerStep}>
-          01 — Where
-        </AppText>
-        <View style={styles.plannerPlaceRow}>
-          <View style={styles.plannerPlaceMain}>
-            <TextInput
-              style={styles.plannerHeadlineInput}
-              value={destination}
-              onChangeText={setDestination}
-              placeholder="Cebu"
-              placeholderTextColor={colors.lineStrong}
-            />
-            <AppText variant="caption">Destination</AppText>
-          </View>
-          <View style={styles.plannerPlaceSide}>
-            <TextInput
-              style={styles.plannerSideInput}
-              value={region}
-              onChangeText={setRegion}
-              placeholder="cebu"
-              placeholderTextColor={colors.lineStrong}
-              autoCapitalize="none"
-            />
-            <AppText variant="caption">Region</AppText>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.plannerBlock}>
-        <AppText variant="eyebrow" style={styles.plannerStep}>
-          02 — Time & spend
-        </AppText>
-        <View style={styles.plannerFigureRow}>
-          <View style={styles.plannerFigure}>
-            <TextInput
-              style={styles.plannerFigureInput}
-              value={days}
-              onChangeText={setDays}
-              keyboardType="numeric"
-              placeholder="4"
-              placeholderTextColor={colors.lineStrong}
-            />
-            <AppText variant="caption">days</AppText>
-          </View>
-          <View style={styles.plannerFigureRule} />
-          <View style={styles.plannerFigure}>
-            <TextInput
-              style={styles.plannerFigureInput}
-              value={budget}
-              onChangeText={setBudget}
-              keyboardType="numeric"
-              placeholder="20000"
-              placeholderTextColor={colors.lineStrong}
-            />
-            <AppText variant="caption">peso budget</AppText>
-          </View>
-        </View>
-        <View style={styles.plannerMonthRow}>
-          <AppText variant="caption" style={styles.plannerMonthLabel}>
-            Going in
-          </AppText>
-          <TextInput
-            style={styles.plannerMonthInput}
-            value={month}
-            onChangeText={setMonth}
-            placeholder="June"
-            placeholderTextColor={colors.lineStrong}
-          />
-        </View>
-      </View>
-
-      <View style={styles.plannerBlock}>
-        <AppText variant="eyebrow" style={styles.plannerStep}>
-          03 — Style
-        </AppText>
-
-        <View style={styles.plannerVibeGrid}>
-          {vibes.map(option => {
-            const value = option.toLowerCase();
-            const active = interests.includes(value);
-            return (
-              <TouchableOpacity
-                key={option}
-                activeOpacity={0.8}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: active }}
-                style={styles.plannerVibe}
-                onPress={() => toggleVibe(option)}
-              >
-                <View style={[styles.plannerChoiceDot, active && styles.plannerChoiceDotActive]}>
-                  {active ? <Ionicons name="checkmark" size={10} color={colors.white} /> : null}
-                </View>
-                <AppText
-                  variant="bodySm"
-                  style={[styles.plannerVibeText, active && styles.plannerVibeTextActive]}
-                >
-                  {option}
-                </AppText>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        <View style={styles.plannerStyleRow}>
-          <View style={styles.plannerStyleCol}>
-            <AppText variant="caption" style={styles.plannerStyleLabel}>
-              Pace
-            </AppText>
-            {paceOptions.map(option => {
-              const active = pace === option;
-              return (
-                <TouchableOpacity
-                  key={option}
-                  activeOpacity={0.8}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: active }}
-                  style={styles.plannerOptionRow}
-                  onPress={() => setPace(option)}
-                >
-                  <View style={[styles.plannerOptionDot, active && styles.plannerOptionDotActive]} />
-                  <AppText
-                    variant="bodySm"
-                    style={[styles.plannerOptionText, active && styles.plannerOptionTextActive]}
-                  >
-                    {option}
-                  </AppText>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <View style={styles.plannerStyleCol}>
-            <AppText variant="caption" style={styles.plannerStyleLabel}>
-              Travelers
-            </AppText>
-            {travelerOptions.map(option => {
-              const active = travelers === option;
-              return (
-                <TouchableOpacity
-                  key={option}
-                  activeOpacity={0.8}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: active }}
-                  style={styles.plannerOptionRow}
-                  onPress={() => setTravelers(option)}
-                >
-                  <View style={[styles.plannerOptionDot, active && styles.plannerOptionDotActive]} />
-                  <AppText
-                    variant="bodySm"
-                    style={[styles.plannerOptionText, active && styles.plannerOptionTextActive]}
-                  >
-                    {option}
-                  </AppText>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.plannerBlock}>
-        <AppText variant="eyebrow" style={styles.plannerStep}>
-          04 — Notes
-        </AppText>
-        <TextInput
-          style={styles.plannerNotesInput}
-          multiline
-          value={notes}
-          onChangeText={setNotes}
-          placeholder="Anything the planner should know?"
-          placeholderTextColor={colors.muted}
-        />
-      </View>
-
-      <Button
-        label={loading ? 'Planning your route…' : 'Generate itinerary'}
-        icon="arrow-forward"
-        loading={loading}
-        onPress={handleGenerate}
-      />
-
-      {error ? <InlineError message={error} /> : null}
-    </View>
-  );
-
-  const renderChatPlanner = () => (
-    <Card style={styles.sectionCard}>
-      <View style={styles.chatHead}>
-        <IconBadge name="sparkles-outline" tone="teal" size={44} />
-        <View style={styles.chatHeadText}>
-          <AppText variant="h3">Ask the planner</AppText>
-          <AppText variant="caption">Describe it the way you would tell a friend.</AppText>
-        </View>
-      </View>
-
-      {chatMessages.length ? (
-        <View style={styles.chatLog}>
-          {chatMessages.map((message, index) => (
-            <View
-              key={`${message.role}-${index}`}
-              style={[
-                styles.chatBubble,
-                message.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleAssistant,
-              ]}
-            >
-              <AppText
-                variant="bodySm"
-                style={message.role === 'user' ? styles.chatBubbleUserText : styles.chatBubbleAssistantText}
-              >
-                {message.text}
-              </AppText>
-            </View>
-          ))}
-        </View>
-      ) : null}
-
-      <TextInput
-        style={[styles.input, styles.chatInput]}
-        placeholder="e.g. Plan a 4-day Cebu trip for a couple with beaches and local food"
-        placeholderTextColor={colors.muted}
-        value={chatPrompt}
-        onChangeText={setChatPrompt}
-        multiline
-      />
-
-      <Button
-        label={chatLoading ? 'Thinking…' : 'Generate from prompt'}
-        icon="sparkles-outline"
-        variant="secondary"
-        loading={chatLoading}
-        onPress={handleChatPlan}
-      />
-    </Card>
-  );
-
-  const renderFeatures = () => (
-    <Card padded={false} style={styles.featuresCard}>
-      {features.map((feature, index) => (
-        <View key={feature.title} style={[styles.featureRow, index > 0 && styles.featureRowBorder]}>
-          <IconBadge name={feature.icon} tone={feature.tone} size={44} />
-          <View style={styles.featureText}>
-            <AppText variant="h3">{feature.title}</AppText>
-            <AppText variant="bodySm" style={styles.featureBody}>
-              {feature.text}
-            </AppText>
-          </View>
         </View>
       ))}
     </Card>
   );
 
-  const renderPlanHome = () => (
+  const renderHomeHeader = () => (
+    <View style={styles.homeHeader}>
+      <View style={styles.brandRow}>
+        <View style={styles.brandMark}>
+          <Ionicons name="compass" size={19} color={colors.white} />
+        </View>
+        <View>
+          <AppText style={styles.brand}>AITinerary</AppText>
+          <AppText variant="eyebrow" style={styles.subBrand}>
+            Plan smarter. Travel better.
+          </AppText>
+        </View>
+      </View>
+
+      <TouchableOpacity
+        activeOpacity={0.85}
+        style={styles.notifButton}
+        accessibilityRole="button"
+        accessibilityLabel="Notifications"
+        onPress={() => {
+          const opening = !notificationsOpen;
+          setNotificationsOpen(opening);
+          if (opening) markNotificationsRead();
+        }}
+      >
+        <Ionicons name="notifications-outline" size={21} color={colors.ink} />
+        {unreadCount ? <View style={styles.notifDot} /> : null}
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderHomeHero = () => (
+    <ImageBackground
+      source={{ uri: photos.sunset }}
+      style={styles.homeHero}
+      imageStyle={styles.homeHeroImage}
+    >
+      <LinearGradient
+        colors={['rgba(18,60,58,0.2)', 'rgba(18,60,58,0.3)', 'rgba(18,60,58,0.92)']}
+        locations={[0, 0.45, 1]}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={styles.homeHeroBody}>
+        <AppText variant="hero" style={styles.homeHeroTitle}>
+          Plan Smarter. Travel Better.
+        </AppText>
+        <AppText variant="bodySm" style={styles.homeHeroText}>
+          Your AI travel companion for unforgettable journeys.
+        </AppText>
+
+        <View style={styles.homeSearchWrap}>
+          <Ionicons name="search" size={18} color={colors.secondary} style={styles.homeSearchIcon} />
+          <TextInput
+            style={styles.homeSearchInput}
+            value={homeSearch}
+            onChangeText={setHomeSearch}
+            placeholder="Where do you want to go?"
+            placeholderTextColor={colors.muted}
+            returnKeyType="search"
+            accessibilityLabel="Destination search"
+            onSubmitEditing={() => {
+              startSearch(homeSearch);
+              setHomeSearch('');
+            }}
+          />
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={styles.homeSearchSubmit}
+            accessibilityRole="button"
+            accessibilityLabel="Search destination"
+            onPress={() => {
+              startSearch(homeSearch);
+              setHomeSearch('');
+            }}
+          >
+            <Ionicons name="arrow-forward" size={16} color={colors.white} />
+          </TouchableOpacity>
+        </View>
+
+        {recentSearches.length ? (
+          <View style={styles.recentRow}>
+            {recentSearches.map(term => (
+              <TouchableOpacity
+                key={term}
+                activeOpacity={0.8}
+                style={styles.recentPill}
+                onPress={() => startSearch(term)}
+              >
+                <Ionicons name="time-outline" size={12} color="rgba(255,255,255,0.85)" />
+                <AppText variant="caption" style={styles.recentPillText}>
+                  {term}
+                </AppText>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    </ImageBackground>
+  );
+
+  const renderQuickActions = () => {
+    const tiles: Array<{
+      key: string;
+      label: string;
+      icon: React.ComponentProps<typeof Ionicons>['name'];
+      bg: string;
+      fg: string;
+      onPress: () => void;
+    }> = [
+      {
+        key: 'plan',
+        label: 'Plan Trip',
+        icon: 'add-circle-outline',
+        bg: colors.tealSoft,
+        fg: colors.forest,
+        onPress: () => openPlanFlow(),
+      },
+      {
+        key: 'explore',
+        label: 'Explore',
+        icon: 'compass-outline',
+        bg: colors.claySoft,
+        fg: colors.clay,
+        onPress: () => changeTab('explore'),
+      },
+      {
+        key: 'map',
+        label: 'Map',
+        icon: 'map-outline',
+        bg: colors.sageSoft,
+        fg: colors.sage,
+        onPress: () => {
+          setHomeNotice(null);
+          const trip = result || savedTrips[0];
+          if (!trip) {
+            setHomeNotice('No trip yet — generate an itinerary and its route map will appear here.');
+            return;
+          }
+          openTrip(trip);
+          setMapExpanded(true);
+        },
+      },
+      {
+        key: 'assistant',
+        label: 'AI Assistant',
+        icon: 'sparkles-outline',
+        bg: colors.sand,
+        fg: colors.warning,
+        onPress: () => {
+          setHomeNotice(null);
+          openAssistant();
+        },
+      },
+    ];
+
+    return (
+      <View style={styles.quickGrid}>
+        {tiles.map(tile => (
+          <TouchableOpacity
+            key={tile.key}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={tile.label}
+            style={styles.quickTile}
+            onPress={() => {
+              setHomeNotice(null);
+              tile.onPress();
+            }}
+          >
+            <View style={[styles.quickTileIcon, { backgroundColor: tile.bg }]}>
+              <Ionicons name={tile.icon} size={21} color={tile.fg} />
+            </View>
+            <AppText variant="label" style={styles.quickTileLabel}>
+              {tile.label}
+            </AppText>
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
+  };
+
+  const renderUpcomingTrip = () => {
+    const upcoming = savedTrips[0];
+
+    return (
+      <View style={styles.homeSection}>
+        <View style={styles.homeSectionHead}>
+          <AppText variant="eyebrow" style={styles.homeSectionEyebrow}>
+            Upcoming trip
+          </AppText>
+          {savedTrips.length ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="View all trips"
+              onPress={() => changeTab('trips')}
+            >
+              <AppText variant="label" style={styles.viewAllText}>
+                View All
+              </AppText>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {upcoming ? (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel="Open upcoming itinerary"
+            style={styles.upcomingCard}
+            onPress={() => openTrip(upcoming)}
+          >
+            <ImageBackground
+              source={{ uri: smallPhoto(photoForDestination(upcoming.destination, upcoming.region)) }}
+              style={styles.upcomingPhoto}
+              imageStyle={styles.upcomingPhotoImage}
+            >
+              <LinearGradient
+                colors={['rgba(18,60,58,0.06)', 'rgba(18,60,58,0.78)']}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.statusChip}>
+                <AppText variant="eyebrow" style={styles.statusChipText}>
+                  Upcoming
+                </AppText>
+              </View>
+              <View style={styles.upcomingBody}>
+                <AppText variant="h2" style={styles.upcomingTitle}>
+                  {upcoming.destination}
+                </AppText>
+                <AppText variant="caption" style={styles.upcomingMeta}>
+                  {upcoming.month ? `${upcoming.month} · ` : ''}
+                  {upcoming.days?.length ?? 0} days · {upcoming.region}
+                </AppText>
+                <View style={styles.upcomingMetaRow}>
+                  <MetaItem
+                    light
+                    icon="cash-outline"
+                    label={formatCost(upcoming.total_budget, regionCurrency(upcoming?.region))}
+                  />
+                  <MetaItem light icon="navigate-outline" label="Open itinerary" />
+                </View>
+              </View>
+            </ImageBackground>
+          </TouchableOpacity>
+        ) : (
+          <Card style={styles.upcomingEmpty}>
+            <EmptyState
+              icon="briefcase-outline"
+              title="No trips planned yet"
+              text="Tell us where you want to go and we will shape the route around you."
+              actionLabel="Plan your first trip"
+              onAction={() => openPlanFlow()}
+            />
+          </Card>
+        )}
+      </View>
+    );
+  };
+
+  const renderDestinationCarousel = () => (
+    <View style={styles.homeSection}>
+      <View style={styles.homeSectionHead}>
+        <AppText variant="eyebrow" style={styles.homeSectionEyebrow}>
+          Explore destinations
+        </AppText>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Open explore tab"
+          onPress={() => changeTab('explore')}
+        >
+          <AppText variant="label" style={styles.viewAllText}>
+            See all
+          </AppText>
+        </TouchableOpacity>
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.destCarousel}
+      >
+        {destinationPicks.map(pick => (
+          <TouchableOpacity
+            key={pick.id}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel={`Plan a trip to ${pick.label}`}
+            style={styles.destSlide}
+            onPress={() => openDestination(pick)}
+          >
+            <ImageBackground
+              source={{ uri: smallPhoto(pick.photo) }}
+              style={styles.destSlidePhoto}
+              imageStyle={styles.destSlidePhotoImage}
+            >
+              <LinearGradient
+                colors={['rgba(18,60,58,0.04)', 'rgba(18,60,58,0.82)']}
+                style={StyleSheet.absoluteFill}
+              />
+              <View style={styles.destSlideBody}>
+                <AppText variant="h3" style={styles.destSlideName}>
+                  {pick.label}
+                </AppText>
+                <AppText variant="caption" style={styles.destSlideMood}>
+                  {pick.mood}
+                </AppText>
+                <AppText variant="caption" style={styles.destSlideBlurb} numberOfLines={2}>
+                  {pick.blurb}
+                </AppText>
+              </View>
+            </ImageBackground>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+
+  const renderAssistantPromo = () => (
+    <View style={[styles.homeSection, styles.homeSectionLast]}>
+      <View style={styles.promoCard}>
+        <View style={styles.promoHead}>
+          <View style={styles.promoIcon}>
+            <Ionicons name="sparkles" size={18} color={colors.forest} />
+          </View>
+          <View>
+            <AppText variant="h3" style={styles.promoTitle}>
+              Need help planning?
+            </AppText>
+            <AppText variant="caption" style={styles.promoText}>
+              Ask me anything about your trip!
+            </AppText>
+          </View>
+        </View>
+        <Button
+          label="Chat with AI Assistant"
+          icon="chatbubble-ellipses-outline"
+          variant="secondary"
+          onPress={() => openAssistant()}
+          style={styles.promoButton}
+        />
+      </View>
+      <AppText variant="caption" style={styles.attribution}>
+        Weather and forecast by Open-Meteo
+      </AppText>
+    </View>
+  );
+
+  const renderHome = () => (
     <>
-      {renderDiscoverHeader()}
+      {renderHomeHeader()}
+      {homeNotice ? (
+        <View style={styles.noticeBanner}>
+          <Ionicons name="information-circle-outline" size={16} color={colors.warning} />
+          <AppText variant="caption" style={styles.noticeText}>
+            {homeNotice}
+          </AppText>
+        </View>
+      ) : null}
       {!isOnline ? (
         <View style={styles.offlineBanner}>
           <Ionicons name="cloud-offline-outline" size={16} color={colors.warning} />
@@ -1384,21 +1537,830 @@ export default function App() {
           </AppText>
         </View>
       ) : null}
-      {renderDestinationRail()}
-      {renderHero()}
-      <View
-        onLayout={event => {
-          formYRef.current = event.nativeEvent.layout.y + 8;
-        }}
-      >
-        {renderTripBrief()}
-      </View>
-      {renderChatPlanner()}
-      {renderFeatures()}
-      <AppText variant="caption" style={styles.attribution}>
-        Weather and forecast by Open-Meteo
-      </AppText>
+      {notificationsOpen ? renderNotificationsPanel() : null}
+      {renderHomeHero()}
+      {renderQuickActions()}
+      {renderUpcomingTrip()}
+      {renderDestinationCarousel()}
+      {renderAssistantPromo()}
     </>
+  );
+
+  // ---------- Explore ----------
+
+  const exploreVisiblePicks = destinationPicks.filter(pick => {
+    if (exploreCategory !== 'all' && !(destinationCategoryMap[pick.id] || []).includes(exploreCategory)) {
+      return false;
+    }
+    const query = exploreQuery.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      pick.label.toLowerCase().includes(query) ||
+      pick.mood.toLowerCase().includes(query) ||
+      pick.blurb.toLowerCase().includes(query)
+    );
+  });
+
+  const renderExploreSearch = () => (
+    <View style={styles.exploreSearchWrap}>
+      <Ionicons name="search" size={18} color={colors.secondary} style={styles.homeSearchIcon} />
+      <TextInput
+        style={styles.exploreSearchInput}
+        value={exploreQuery}
+        onChangeText={setExploreQuery}
+        placeholder="Search destinations"
+        placeholderTextColor={colors.muted}
+        returnKeyType="search"
+        accessibilityLabel="Explore destination search"
+      />
+    </View>
+  );
+
+  const renderExploreChips = () => (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.chipsRow}
+    >
+      {exploreCategories.map(category => (
+        <Chip
+          key={category.id}
+          label={category.label}
+          icon={category.icon}
+          active={exploreCategory === category.id}
+          onPress={() => setExploreCategory(category.id)}
+        />
+      ))}
+    </ScrollView>
+  );
+
+  const renderCollections = () => (
+    <View style={styles.exploreSection}>
+      <AppText variant="eyebrow" style={styles.homeSectionEyebrow}>
+        Curated collections
+      </AppText>
+      {curatedCollections.map(collection => (
+        <Card key={collection.id} style={styles.collectionCard}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={styles.collectionRow}
+            accessibilityRole="button"
+            accessibilityLabel={`Open collection ${collection.title}`}
+            onPress={() => openDestination(destinationPicks.find(pick => pick.id === collection.picks[0])!)}
+          >
+            <Image
+              source={{ uri: smallPhoto(collection.photo) }}
+              style={styles.collectionThumb}
+            />
+            <View style={styles.collectionBody}>
+              <AppText variant="h3">{collection.title}</AppText>
+              <AppText variant="caption">{collection.text}</AppText>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </TouchableOpacity>
+        </Card>
+      ))}
+    </View>
+  );
+
+  const renderExplore = () => (
+    <>
+      <View style={styles.screenHeader}>
+        <AppText variant="eyebrow">Explore</AppText>
+        <AppText variant="display" style={styles.screenTitle}>
+          Where to next?
+        </AppText>
+        <AppText variant="body">
+          Browse destinations, then plan the route that fits your pace and budget.
+        </AppText>
+      </View>
+
+      {renderExploreSearch()}
+      {renderExploreChips()}
+
+      {exploreVisiblePicks.length ? (
+        <View style={styles.destGrid}>
+          {exploreVisiblePicks.map(pick => (
+            <TouchableOpacity
+              key={pick.id}
+              activeOpacity={0.9}
+              accessibilityRole="button"
+              accessibilityLabel={`Plan a trip to ${pick.label}`}
+              style={styles.destGridCard}
+              onPress={() => openDestination(pick)}
+            >
+              <ImageBackground
+                source={{ uri: smallPhoto(pick.photo) }}
+                style={styles.destGridPhoto}
+                imageStyle={styles.destGridPhotoImage}
+              >
+                <LinearGradient
+                  colors={['rgba(18,60,58,0.04)', 'rgba(18,60,58,0.82)']}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View style={styles.destGridBody}>
+                  <AppText variant="h3" style={styles.destGridName}>
+                    {pick.label}
+                  </AppText>
+                  <AppText variant="caption" style={styles.destGridMood}>
+                    {pick.mood}
+                  </AppText>
+                </View>
+              </ImageBackground>
+            </TouchableOpacity>
+          ))}
+        </View>
+      ) : (
+        <Card style={styles.exploreNoResults}>
+          <EmptyState
+            icon="search-outline"
+            title="No matches"
+            text="That destination is not in the beta yet. Try another name or clear the filter."
+            actionLabel="Clear search"
+            onAction={() => {
+              setExploreQuery('');
+              setExploreCategory('all');
+            }}
+          />
+        </Card>
+      )}
+
+      {!exploreQuery ? renderCollections() : null}
+    </>
+  );
+
+  // ---------- My Trips ----------
+
+  const renderTrips = () => {
+    const monthIndex = (name?: string | null) => {
+      const months = [
+        'january', 'february', 'march', 'april', 'may', 'june',
+        'july', 'august', 'september', 'october', 'november', 'december',
+      ];
+      if (!name) return -1;
+      return months.indexOf(String(name).trim().toLowerCase());
+    };
+    const currentMonthIdx = new Date().getMonth();
+    const tripsUpcoming = savedTrips.filter(trip => {
+      const idx = monthIndex(trip.month);
+      return idx < 0 ? true : idx >= currentMonthIdx;
+    });
+    const tripsPast = savedTrips.filter(
+      trip => monthIndex(trip.month) >= 0 && monthIndex(trip.month) < currentMonthIdx,
+    );
+
+    const tripCard = (trip: any, index: number, status: 'Upcoming' | 'Past') => (
+      <TouchableOpacity
+        key={`${trip.destination}-${index}`}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${trip.destination} itinerary`}
+        style={[styles.tripsRow, index > 0 && styles.tripsRowBorder]}
+        onPress={() => openSavedTrip(trip)}
+      >
+        <Image
+          source={{ uri: smallPhoto(photoForDestination(trip.destination, trip.region)) }}
+          style={styles.tripsThumb}
+        />
+        <View style={styles.tripsRowText}>
+          <View style={styles.tripsNameRow}>
+            <AppText variant="h3">{trip.destination}</AppText>
+            <View
+              style={[
+                styles.statusChip,
+                status === 'Upcoming' ? styles.statusChipTeal : styles.statusChipNeutral,
+              ]}
+            >
+              <AppText
+                variant="caption"
+                style={status === 'Upcoming' ? styles.statusChipTealText : styles.statusChipNeutralText}
+              >
+                {status}
+              </AppText>
+            </View>
+          </View>
+          <AppText variant="caption" style={styles.tripsMeta} numberOfLines={2}>
+            {trip.month ? `${trip.month} · ` : ''}
+            {trip.days?.length ?? 0} days · {trip.region} ·{' '}
+            {formatCost(trip.total_budget, regionCurrency(trip?.region))}
+          </AppText>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+      </TouchableOpacity>
+    );
+
+    return (
+      <>
+        <View style={styles.screenHeader}>
+          <AppText variant="eyebrow">My Trips</AppText>
+          <AppText variant="display" style={styles.screenTitle}>
+            Your trips
+          </AppText>
+          <AppText variant="body">Upcoming plans and past journeys, all in one place.</AppText>
+        </View>
+
+        <View style={styles.tripsSection}>
+          <AppText variant="label" style={styles.tripsSectionLabel}>
+            Upcoming
+          </AppText>
+          {tripsUpcoming.length ? (
+            <Card padded={false} style={styles.tripsCard}>
+              {tripsUpcoming.map((trip, index) => tripCard(trip, index, 'Upcoming'))}
+            </Card>
+          ) : (
+            <Card style={styles.tripsEmptyCard}>
+              <EmptyState
+                icon="briefcase-outline"
+                title="No upcoming trips"
+                text="Plan your next escape and it will live here."
+                actionLabel="Plan your first trip"
+                onAction={() => openPlanFlow()}
+              />
+            </Card>
+          )}
+        </View>
+
+        <View style={styles.tripsSection}>
+          <AppText variant="label" style={styles.tripsSectionLabel}>
+            Past
+          </AppText>
+          {tripsPast.length ? (
+            <Card padded={false} style={styles.tripsCard}>
+              {tripsPast.map((trip, index) => tripCard(trip, index, 'Past'))}
+            </Card>
+          ) : (
+            <Card style={styles.tripsEmptyCard}>
+              <EmptyState
+                icon="time-outline"
+                title="Nothing here yet"
+                text="Trips from earlier months will show up here."
+              />
+            </Card>
+          )}
+        </View>
+      </>
+    );
+  };
+
+  // ---------- Plan Trip: guided 5-step flow ----------
+
+  const renderPlanFlow = () => {
+    const totalSteps = 5;
+    const dayCount = Number(days) || 0;
+    const budgetValue = Number(budget) || 0;
+
+    const canContinue =
+      planStep === 0
+        ? destination.trim().length > 0
+        : planStep === 1
+          ? dayCount > 0 && month.trim().length > 0
+          : planStep === 2
+            ? budgetValue > 0
+            : true;
+
+    const goNext = () => {
+      if (!canContinue) return;
+      setPlanStep(step => Math.min(step + 1, totalSteps - 1));
+      scrollToTop();
+    };
+
+    const goBackStep = () => {
+      if (planStep === 0) {
+        closeFlows();
+        return;
+      }
+      setPlanStep(step => step - 1);
+      scrollToTop();
+    };
+
+    const startGeneration = () => {
+      setPlanOpen(false);
+      setViewingTrip(true);
+      handleGenerate();
+    };
+
+    return (
+      <>
+        <View style={styles.wizardTop}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            style={styles.wizardBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            onPress={goBackStep}
+          >
+            <Ionicons name="arrow-back" size={20} color={colors.ink} />
+          </TouchableOpacity>
+          <View style={styles.wizardProgressWrap}>
+            <ProgressBar value={((planStep + 1) / totalSteps) * 100} color={colors.forest} />
+            <AppText variant="caption" style={styles.wizardProgressText}>
+              Step {planStep + 1} of {totalSteps}
+            </AppText>
+          </View>
+        </View>
+
+        {planStep === 0 ? (
+          <>
+            <View style={styles.wizardIntro}>
+              <AppText variant="eyebrow">Step 1 — Destination</AppText>
+              <AppText variant="h1" style={styles.wizardTitle}>
+                Where are you headed?
+              </AppText>
+            </View>
+            <Card style={styles.wizardCard}>
+              <Field label="Destination">
+                <TextInput
+                  style={styles.input}
+                  value={destination}
+                  onChangeText={setDestination}
+                  placeholder="Cebu"
+                  placeholderTextColor={colors.muted}
+                  autoCapitalize="words"
+                />
+              </Field>
+              <Field label="Region key" hint="Auto-filled when you pick a suggestion below.">
+                <TextInput
+                  style={styles.input}
+                  value={region}
+                  onChangeText={setRegion}
+                  placeholder="cebu"
+                  placeholderTextColor={colors.muted}
+                  autoCapitalize="none"
+                />
+              </Field>
+              <AppText variant="label" style={styles.wizardGroupLabel}>
+                Supported regions
+              </AppText>
+              <View style={styles.suggestionWrap}>
+                {destinationPicks.map(pick => {
+                  const active = region === pick.id;
+                  return (
+                    <Chip
+                      key={pick.id}
+                      label={pick.label}
+                      active={active}
+                      icon={pick.icon}
+                      onPress={() => {
+                        setRegion(pick.id);
+                        setDestination(pick.label);
+                      }}
+                    />
+                  );
+                })}
+              </View>
+              {recentSearches.length ? (
+                <>
+                  <AppText variant="label" style={styles.wizardGroupLabel}>
+                    Recently viewed
+                  </AppText>
+                  <View style={styles.suggestionWrap}>
+                    {recentSearches.map(term => (
+                      <Chip key={term} label={term} onPress={() => startSearch(term)} />
+                    ))}
+                  </View>
+                </>
+              ) : null}
+            </Card>
+          </>
+        ) : null}
+
+        {planStep === 1 ? (
+          <>
+            <View style={styles.wizardIntro}>
+              <AppText variant="eyebrow">Step 2 — Dates &amp; travelers</AppText>
+              <AppText variant="h1" style={styles.wizardTitle}>
+                When, and with who?
+              </AppText>
+            </View>
+            <Card style={styles.wizardCard}>
+              <View style={styles.wizardFigureRow}>
+                <View style={styles.wizardFigure}>
+                  <Field label="Trip length (days)">
+                    <TextInput
+                      style={styles.input}
+                      value={days}
+                      onChangeText={setDays}
+                      keyboardType="numeric"
+                      placeholder="4"
+                      placeholderTextColor={colors.muted}
+                    />
+                  </Field>
+                </View>
+                <View style={styles.wizardFigure}>
+                  <Field label="Travel month" hint="Used for seasonal weather and risk logic.">
+                    <TextInput
+                      style={styles.input}
+                      value={month}
+                      onChangeText={setMonth}
+                      placeholder="June"
+                      placeholderTextColor={colors.muted}
+                    />
+                  </Field>
+                </View>
+              </View>
+              <AppText variant="label" style={styles.wizardGroupLabel}>
+                Travelers
+              </AppText>
+              <View style={styles.wizardOptionsRow}>
+                {travelerOptions.map(option => {
+                  const active = travelers === option;
+                  return (
+                    <TouchableOpacity
+                      key={option}
+                      activeOpacity={0.8}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      style={[styles.wizardOption, active && styles.wizardOptionActive]}
+                      onPress={() => setTravelers(option)}
+                    >
+                      <View style={[styles.wizardOptionDot, active && styles.wizardOptionDotActive]} />
+                      <AppText
+                        variant="bodySm"
+                        style={[styles.wizardOptionText, active && styles.wizardOptionTextActive]}
+                      >
+                        {option}
+                      </AppText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {dayCount > 30 || dayCount <= 0 ? (
+                <InlineError message="Enter a trip length between 1 and 30 days." />
+              ) : null}
+            </Card>
+          </>
+        ) : null}
+
+        {planStep === 2 ? (
+          <>
+            <View style={styles.wizardIntro}>
+              <AppText variant="eyebrow">Step 3 — Preferences</AppText>
+              <AppText variant="h1" style={styles.wizardTitle}>
+                Shape the route.
+              </AppText>
+            </View>
+            <Card style={styles.wizardCard}>
+              <Field label={`Budget (${region ? REGION_CURRENCY[region] ?? '₱ estimates' : 'local estimates'})`}>
+                <TextInput
+                  style={styles.input}
+                  value={budget}
+                  onChangeText={setBudget}
+                  keyboardType="numeric"
+                  placeholder="20000"
+                  placeholderTextColor={colors.muted}
+                />
+              </Field>
+              <AppText variant="label" style={styles.wizardGroupLabel}>
+                Pace
+              </AppText>
+              <View style={styles.wizardPaceRow}>
+                {paceOptions.map(option => {
+                  const active = pace === option;
+                  return (
+                    <TouchableOpacity
+                      key={option}
+                      activeOpacity={0.8}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: active }}
+                      style={[styles.wizardPace, active && styles.wizardPaceActive]}
+                      onPress={() => setPace(option)}
+                    >
+                      <AppText
+                        variant="label"
+                        style={[styles.wizardPaceText, active && styles.wizardPaceTextActive]}
+                      >
+                        {option}
+                      </AppText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <AppText variant="label" style={styles.wizardGroupLabel}>
+                Interests
+              </AppText>
+              <View style={styles.suggestionWrap}>
+                {vibes.map(option => {
+                  const active = interests.includes(option.toLowerCase());
+                  return (
+                    <TouchableOpacity
+                      key={option}
+                      activeOpacity={0.8}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: active }}
+                      style={[styles.wizardInterest, active && styles.wizardInterestActive]}
+                      onPress={() => {
+                        setHomeNotice(null);
+                        toggleVibe(option);
+                      }}
+                    >
+                      <View style={[styles.wizardOptionDot, active && styles.wizardOptionDotActive]}>
+                        {active ? <Ionicons name="checkmark" size={10} color={colors.white} /> : null}
+                      </View>
+                      <AppText
+                        variant="bodySm"
+                        style={[styles.wizardOptionText, active && styles.wizardOptionTextActive]}
+                      >
+                        {option}
+                      </AppText>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Field label="Notes" style={styles.wizardNotesField}>
+                <TextInput
+                  style={[styles.input, styles.wizardNotesInput]}
+                  multiline
+                  value={notes}
+                  onChangeText={setNotes}
+                  placeholder="Anything the planner should know?"
+                  placeholderTextColor={colors.muted}
+                />
+              </Field>
+              {budgetValue <= 0 ? <InlineError message="Enter a budget to continue." /> : null}
+            </Card>
+          </>
+        ) : null}
+
+        {planStep === 3 ? (
+          <>
+            <View style={styles.wizardIntro}>
+              <AppText variant="eyebrow">Step 4 — Review</AppText>
+              <AppText variant="h1" style={styles.wizardTitle}>
+                Look good to you?
+              </AppText>
+            </View>
+            <Card style={styles.wizardCard}>
+              <View style={styles.summaryBlock}>
+                <View style={styles.summaryRow}>
+                  <AppText variant="caption" style={styles.summaryLabel}>
+                    Destination
+                  </AppText>
+                  <AppText variant="label">{destination || 'Not set'}</AppText>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit destination"
+                    onPress={() => setPlanStep(0)}
+                    style={styles.summaryEdit}
+                  >
+                    <AppText variant="caption" style={styles.summaryEditSmall}>
+                      Edit
+                    </AppText>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.summaryRow}>
+                  <AppText variant="caption" style={styles.summaryLabel}>
+                    Dates
+                  </AppText>
+                  <AppText variant="label">
+                    {month} · {dayCount || '—'} days
+                  </AppText>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit dates"
+                    onPress={() => setPlanStep(1)}
+                    style={styles.summaryEdit}
+                  >
+                    <AppText variant="caption" style={styles.summaryEditSmall}>
+                      Edit
+                    </AppText>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.summaryRow}>
+                  <AppText variant="caption" style={styles.summaryLabel}>
+                    Travelers
+                  </AppText>
+                  <AppText variant="label">{travelers}</AppText>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit travelers"
+                    onPress={() => setPlanStep(1)}
+                    style={styles.summaryEdit}
+                  >
+                    <AppText variant="caption" style={styles.summaryEditSmall}>
+                      Edit
+                    </AppText>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.summaryRow}>
+                  <AppText variant="caption" style={styles.summaryLabel}>
+                    Pace
+                  </AppText>
+                  <AppText variant="label">{pace}</AppText>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit pace"
+                    onPress={() => setPlanStep(2)}
+                    style={styles.summaryEdit}
+                  >
+                    <AppText variant="caption" style={styles.summaryEditSmall}>
+                      Edit
+                    </AppText>
+                  </TouchableOpacity>
+                </View>
+                <View style={[styles.summaryRow, styles.summaryRowLast]}>
+                  <AppText variant="caption" style={styles.summaryLabel}>
+                    Budget
+                  </AppText>
+                  <AppText variant="label">{formatPeso(budgetValue)}</AppText>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit budget"
+                    onPress={() => setPlanStep(2)}
+                    style={styles.summaryEdit}
+                  >
+                    <AppText variant="caption" style={styles.summaryEditSmall}>
+                      Edit
+                    </AppText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              {interests.length ? (
+                <View style={styles.suggestionWrap}>
+                  {interests.map(item => (
+                    <Chip key={item} label={item} />
+                  ))}
+                </View>
+              ) : null}
+              <AppText variant="caption" style={styles.wizardHint}>
+                Estimated costs only — nothing here is a confirmed booking price.
+              </AppText>
+            </Card>
+          </>
+        ) : null}
+
+        {planStep === 4 ? (
+          <>
+            <View style={styles.wizardIntro}>
+              <AppText variant="eyebrow">Step 5 — Generate</AppText>
+              <AppText variant="h1" style={styles.wizardTitle}>
+                Ready when you are.
+              </AppText>
+            </View>
+            <Card style={styles.wizardCard}>
+              <View style={styles.generateSummary}>
+                <IconBadge name="sparkles-outline" tone="teal" size={46} />
+                <View style={styles.generateSummaryText}>
+                  <AppText variant="h3">
+                    {destination || 'Your trip'} · {dayCount || '—'} days
+                  </AppText>
+                  <AppText variant="caption">
+                    We build the route day by day with weather-aware risk, backup plans, and curated
+                    stop details.
+                  </AppText>
+                </View>
+              </View>
+              <AppText variant="caption" style={styles.wizardHint}>
+                Generation uses curated stop data. Estimated costs are not confirmed booking prices.
+              </AppText>
+              <Button
+                label="Generate Itinerary"
+                icon="sparkles"
+                loading={loading}
+                onPress={startGeneration}
+                style={styles.wizardGenerateButton}
+              />
+              {error ? <InlineError message={error} /> : null}
+            </Card>
+          </>
+        ) : null}
+
+        {planStep < 4 ? (
+          <View style={styles.wizardFooter}>
+            <Button
+              label={planStep === 0 ? 'Cancel' : 'Back'}
+              variant="secondary"
+              onPress={goBackStep}
+              style={styles.wizardFooterButton}
+            />
+            <Button
+              label="Next"
+              icon="arrow-forward"
+              disabled={!canContinue}
+              onPress={goNext}
+              style={styles.wizardFooterButton}
+            />
+          </View>
+        ) : null}
+      </>
+    );
+  };
+
+  // ---------- AI Travel Assistant ----------
+
+  const renderAssistant = () => (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={styles.assistantScreen}
+    >
+      <View style={styles.assistantHeader}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={styles.wizardBack}
+          accessibilityRole="button"
+          accessibilityLabel="Close assistant"
+          onPress={closeFlows}
+        >
+          <Ionicons name="arrow-back" size={20} color={colors.ink} />
+        </TouchableOpacity>
+        <IconBadge name="sparkles-outline" tone="teal" size={38} />
+        <View>
+          <AppText variant="h3">AI Travel Assistant</AppText>
+          <AppText variant="caption">Trip advice, budgets, and plan tweaks</AppText>
+        </View>
+      </View>
+
+      <ScrollView style={styles.assistantLog} contentContainerStyle={styles.assistantLogContent}>
+        {chatMessages.length === 0 ? (
+          <>
+            <View style={styles.assistantIntro}>
+              <AppText variant="h2">Need help planning?</AppText>
+              <AppText variant="bodySm" style={styles.assistantIntroText}>
+                Ask me anything about your trip — routes, budgets, weather backups, or swapping a
+                day. I will show proposed changes before applying anything.
+              </AppText>
+            </View>
+            <View style={styles.promptChipsWrap}>
+              {suggestedPrompts.map(prompt => (
+                <Chip
+                  key={prompt}
+                  label={prompt}
+                  style={styles.promptChip}
+                  onPress={() => {
+                    if (!chatLoading) sendPrompt(prompt);
+                  }}
+                />
+              ))}
+            </View>
+          </>
+        ) : (
+          chatMessages.map((message, index) => (
+            <View
+              key={`${message.role}-${index}`}
+              style={[
+                styles.assistantBubbleRow,
+                message.role === 'user' ? styles.assistantBubbleRowUser : null,
+              ]}
+            >
+              <View
+                style={[
+                  styles.chatBubble,
+                  message.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleAssistant,
+                ]}
+              >
+                <AppText
+                  variant="bodySm"
+                  style={
+                    message.role === 'user' ? styles.chatBubbleUserText : styles.chatBubbleAssistantText
+                  }
+                >
+                  {message.text}
+                </AppText>
+              </View>
+            </View>
+          ))
+        )}
+
+        {chatLoading ? (
+          <View style={[styles.assistantBubbleRow, styles.assistantBubbleRowAssistant]}>
+            <View style={[styles.chatBubble, styles.chatBubbleAssistant, styles.typingBubble]}>
+              <ActivityIndicator size="small" color={colors.forest} />
+              <AppText variant="caption" style={styles.typingText}>
+                Thinking…
+              </AppText>
+            </View>
+          </View>
+        ) : null}
+      </ScrollView>
+
+      <View style={styles.assistantComposer}>
+        <TextInput
+          style={[styles.input, styles.assistantInput]}
+          value={chatPrompt}
+          onChangeText={setChatPrompt}
+          placeholder="Ask me anything about your trip"
+          placeholderTextColor={colors.muted}
+          multiline
+          blurOnSubmit={false}
+          onSubmitEditing={handleChatPlan}
+        />
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={[styles.assistantSend, !chatPrompt.trim() && styles.assistantSendDisabled]}
+          accessibilityRole="button"
+          accessibilityLabel="Send message"
+          disabled={chatLoading || !chatPrompt.trim()}
+          onPress={handleChatPlan}
+        >
+          <Ionicons name="arrow-up" size={18} color={colors.white} />
+        </TouchableOpacity>
+      </View>
+      {error ? <InlineError message={error} /> : null}
+    </KeyboardAvoidingView>
   );
 
   const renderLoading = () => (
@@ -1863,7 +2825,7 @@ export default function App() {
     );
   };
 
-  const renderResult = () => {
+  const renderItinerary = () => {
     const budgetItems = [
       { label: 'Stay', value: result.budget_summary?.accommodation ?? 0, color: colors.forest },
       { label: 'Food', value: result.budget_summary?.food ?? 0, color: colors.teal },
@@ -2025,174 +2987,54 @@ export default function App() {
           />
         </View>
 
-        <View style={styles.blockHeader}>
-          <View>
-            <AppText variant="eyebrow">The route</AppText>
-            <AppText variant="h1" style={styles.blockTitle}>
-              Day by day
+        <View style={styles.sectionBlock}>
+          <View style={styles.blockHeader}>
+            <View>
+              <AppText variant="eyebrow">The route</AppText>
+              <AppText variant="h1" style={styles.blockTitle}>
+                Day by day
+              </AppText>
+            </View>
+            <AppText variant="caption">
+              {result.days?.length ?? 0} days · {totalStops} stops
             </AppText>
           </View>
-          <AppText variant="caption">
-            {result.days?.length ?? 0} days · {totalStops} stops
-          </AppText>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.dayChipsRow}
+          >
+            {(result.days || []).map((_day: any, dayIndex: number) => {
+              const active = dayIndex === selectedDayIndex;
+              return (
+                <TouchableOpacity
+                  key={`day-${dayIndex}`}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={`Show day ${dayIndex + 1}`}
+                  style={[styles.dayChip, active && styles.dayChipActive]}
+                  onPress={() => setSelectedDayIndex(dayIndex)}
+                >
+                  <AppText
+                    variant="label"
+                    style={[styles.dayChipText, active && styles.dayChipTextActive]}
+                  >
+                    Day {dayIndex + 1}
+                  </AppText>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
 
-        {(result.days || []).map((day: any, dayIndex: number) => renderDay(day, dayIndex))}
+        {result.days?.[selectedDayIndex] ? renderDay(result.days[selectedDayIndex], selectedDayIndex) : null}
 
         {renderMapCard()}
       </Animated.View>
     );
   };
-
-  const renderSaved = () => {
-    const plannedValue = savedTrips.reduce(
-      (sum, trip) => sum + (Number(trip.total_budget) || 0),
-      0,
-    );
-
-    return (
-      <>
-        <View style={styles.screenHeader}>
-          <AppText variant="eyebrow">Library</AppText>
-          <AppText variant="display" style={styles.screenTitle}>
-            Saved plans
-          </AppText>
-          <AppText variant="body">
-            Your keepers, ready for the next time plans change.
-          </AppText>
-        </View>
-
-        {savedTrips.length ? (
-          <View style={styles.savedSummaryRow}>
-            <View style={styles.savedSummaryPill}>
-              <AppText variant="caption">
-                {savedTrips.length === 1 ? '1 plan' : `${savedTrips.length} plans`}
-              </AppText>
-            </View>
-            <View style={styles.savedSummaryPill}>
-              <AppText variant="caption">{formatPeso(plannedValue)} planned</AppText>
-            </View>
-          </View>
-        ) : null}
-
-        <Card padded={false} style={styles.savedCard}>
-          {savedTrips.length ? (
-            savedTrips.map((trip, index) => (
-              <TouchableOpacity
-                key={`${trip.destination}-${index}`}
-                activeOpacity={0.85}
-                style={[styles.savedRow, index > 0 && styles.savedRowBorder]}
-                onPress={() => openSavedTrip(trip)}
-              >
-                <Image
-                  source={{ uri: smallPhoto(photoForDestination(trip.destination, trip.region)) }}
-                  style={styles.savedThumb}
-                />
-                <View style={styles.savedRowText}>
-                  <AppText variant="h3">{trip.destination}</AppText>
-                  <AppText variant="caption" style={styles.savedMeta}>
-                    {trip.region} · {trip.days?.length ?? 0} days ·{' '}
-                    {formatPeso(trip.total_budget)}
-                  </AppText>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-              </TouchableOpacity>
-            ))
-          ) : (
-            <EmptyState
-              icon="bookmark-outline"
-              title="No saved trips yet"
-              text="Generate a route and save the plan you want to revisit later."
-              actionLabel="Plan a trip"
-              onAction={() => changeTab('plan')}
-            />
-          )}
-        </Card>
-      </>
-    );
-  };
-
-  const renderInsights = () => (
-    <>
-      <View style={styles.screenHeader}>
-        <AppText variant="eyebrow">Travel intelligence</AppText>
-        <AppText variant="display" style={styles.screenTitle}>
-          Better trips, by design.
-        </AppText>
-        <AppText variant="body">
-          The details that make a route feel effortless — before you ever leave.
-        </AppText>
-      </View>
-
-      <ImageBackground
-        source={{ uri: photos.sunset }}
-        style={styles.insightHero}
-        imageStyle={styles.insightHeroImage}
-      >
-        <LinearGradient
-          colors={['rgba(18,30,21,0.08)', 'rgba(18,30,21,0.85)']}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={styles.insightHeroBottom}>
-          <AppText variant="eyebrow" style={styles.insightHeroKicker}>
-            The planner's note
-          </AppText>
-          <AppText variant="h1" style={styles.insightHeroTitle}>
-            Good trips are timed, not rushed.
-          </AppText>
-          <AppText variant="bodySm" style={styles.insightHeroText}>
-            We build around light, weather windows, and how long a place actually deserves.
-          </AppText>
-        </View>
-      </ImageBackground>
-
-      <Card style={styles.sectionCard}>
-        <View style={styles.insightRow}>
-          <IconBadge name="partly-sunny-outline" tone="teal" size={44} />
-          <View style={styles.insightTextWrap}>
-            <AppText variant="h3">Weather-aware days</AppText>
-            <AppText variant="bodySm">
-              Outdoor stops move to the clearest windows, with indoor backups already in place.
-            </AppText>
-          </View>
-        </View>
-        <View style={[styles.insightRow, styles.insightRowBorder]}>
-          <IconBadge name="restaurant-outline" tone="clay" size={44} />
-          <View style={styles.insightTextWrap}>
-            <AppText variant="h3">Local flavor, not checklists</AppText>
-            <AppText variant="bodySm">
-              Every route includes neighborhood tables and hidden gems, not just the obvious stops.
-            </AppText>
-          </View>
-        </View>
-        <View style={[styles.insightRow, styles.insightRowBorder]}>
-          <IconBadge name="git-compare-outline" tone="forest" size={44} />
-          <View style={styles.insightTextWrap}>
-            <AppText variant="h3">Route logic that flows</AppText>
-            <AppText variant="bodySm">
-              Stops are grouped by area, pace, and time so you spend less of the day moving.
-            </AppText>
-          </View>
-        </View>
-      </Card>
-
-      <Card style={styles.tipCard}>
-        <View style={styles.tipHeader}>
-          <Ionicons name="bulb-outline" size={18} color={colors.clay} />
-          <AppText variant="eyebrow" style={styles.tipKicker}>
-            This month
-          </AppText>
-        </View>
-        <AppText variant="h2" style={styles.tipTitle}>
-          Go early, stay late.
-        </AppText>
-        <AppText variant="bodySm">
-          Shoulder-season mornings are calmer and cooler. Book the first boat out, then leave the
-          afternoon open for a long lunch.
-        </AppText>
-      </Card>
-    </>
-  );
 
   const renderProfile = () => {
     const uniqueRegions = new Set(savedTrips.map(trip => trip.region)).size;
@@ -2297,6 +3139,37 @@ export default function App() {
     );
   };
 
+  const flowsActive = assistantOpen || planOpen || viewingTrip;
+
+  // Focused itinerary view failed to produce a trip (backend down, validation
+  // error, etc.) — show a real error state instead of rendering without data.
+  const renderTripUnavailable = () => (
+    <Card style={styles.unavailableCard}>
+      <EmptyState
+        icon="cloud-offline-outline"
+        title="Itinerary unavailable"
+        text={
+          error ||
+          'The planner could not build this itinerary right now. Check your connection and try again.'
+        }
+        actionLabel="Back to planner"
+        onAction={() => {
+          setError(null);
+          setViewingTrip(false);
+          setPlanStep(4);
+          setPlanOpen(true);
+          scrollToTop();
+        }}
+      />
+      <Button
+        label="Back to home"
+        variant="secondary"
+        onPress={() => closeFlows()}
+        style={styles.unavailableSecondary}
+      />
+    </Card>
+  );
+
   const renderMain = () => (
     <SafeAreaView style={styles.main}>
       <ScrollView
@@ -2305,17 +3178,27 @@ export default function App() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.appShell}>
-          {renderTopBar()}
-          {activeTab === 'plan' ? (loading ? renderLoading() : result ? renderResult() : renderPlanHome()) : null}
-          {activeTab === 'saved' ? renderSaved() : null}
-          {activeTab === 'insights' ? renderInsights() : null}
-          {activeTab === 'profile' ? renderProfile() : null}
+          {assistantOpen ? (
+            renderAssistant()
+          ) : planOpen ? (
+            renderPlanFlow()
+          ) : viewingTrip ? (
+            loading ? renderLoading() : result ? renderItinerary() : renderTripUnavailable()
+          ) : activeTab === 'home' ? (
+            renderHome()
+          ) : activeTab === 'trips' ? (
+            renderTrips()
+          ) : activeTab === 'explore' ? (
+            renderExplore()
+          ) : (
+            renderProfile()
+          )}
 
-          {activeTab === 'plan' && result && error ? <InlineError message={error} /> : null}
+          {viewingTrip && !loading && result && error ? <InlineError message={error} /> : null}
         </View>
       </ScrollView>
 
-      <BottomNav active={activeTab} onChange={changeTab} />
+      {!flowsActive ? <BottomNav active={activeTab} onChange={changeTab} /> : null}
     </SafeAreaView>
   );
 
@@ -2628,7 +3511,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   plannerHeadlineInput: {
-    fontFamily: fonts.serif,
+    fontFamily: fonts.bold,
     fontSize: 33,
     lineHeight: 40,
     letterSpacing: -0.5,
@@ -2662,7 +3545,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   plannerFigureInput: {
-    fontFamily: fonts.serif,
+    fontFamily: fonts.bold,
     fontSize: 32,
     lineHeight: 40,
     letterSpacing: -0.5,
@@ -3971,4 +4854,748 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 17,
   },
+  // ---- Home ----
+  homeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 18,
+    paddingTop: 4,
+  },
+  notifButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.soft,
+  },
+  notifDot: {
+    position: 'absolute',
+    top: 9,
+    right: 10,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.clay,
+    borderWidth: 2,
+    borderColor: colors.surface,
+  },
+  notifPanel: {
+    marginBottom: 16,
+  },
+  notifHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  notifClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notifRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+  },
+  notifRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  notifRowRead: {
+    opacity: 0.72,
+  },
+  notifBody: {
+    flex: 1,
+  },
+  notifTime: {
+    marginLeft: 4,
+  },
+  noticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.warningSoft,
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  noticeText: {
+    flex: 1,
+    color: colors.warning,
+  },
+  homeHero: {
+    borderRadius: radius.xl,
+    overflow: 'hidden',
+    marginBottom: 18,
+  },
+  homeHeroImage: {
+    borderRadius: radius.xl,
+  },
+  homeHeroBody: {
+    padding: 22,
+  },
+  homeHeroTitle: {
+    color: colors.white,
+    marginBottom: 6,
+  },
+  homeHeroText: {
+    color: 'rgba(255,255,255,0.86)',
+    marginBottom: 16,
+  },
+  homeSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.pill,
+    paddingHorizontal: 14,
+    minHeight: 50,
+    gap: 8,
+    ...shadows.lifted,
+  },
+  homeSearchIcon: {
+    marginLeft: 2,
+  },
+  homeSearchInput: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    color: colors.ink,
+    paddingVertical: 12,
+  },
+  homeSearchSubmit: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.forest,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  recentPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  recentPillText: {
+    color: 'rgba(255,255,255,0.92)',
+  },
+  homeSection: {
+    marginBottom: 24,
+  },
+  homeSectionLast: {
+    marginBottom: 8,
+  },
+  homeSectionHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  homeSectionEyebrow: {
+    color: colors.forest,
+  },
+  viewAllText: {
+    color: colors.forest,
+  },
+  quickGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 24,
+  },
+  quickTile: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.line,
+    alignItems: 'center',
+    paddingVertical: 14,
+    gap: 8,
+    minHeight: 96,
+    justifyContent: 'center',
+    ...shadows.soft,
+  },
+  quickTileIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickTileLabel: {
+    fontSize: 11,
+    color: colors.ink,
+  },
+  upcomingCard: {
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    ...shadows.lifted,
+  },
+  upcomingPhoto: {
+    height: 190,
+    justifyContent: 'flex-end',
+  },
+  upcomingPhotoImage: {
+    borderRadius: radius.lg,
+  },
+  statusChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+  },
+  statusChipText: {
+    fontSize: 10,
+    letterSpacing: 1.4,
+  },
+  upcomingBody: {
+    padding: 18,
+    paddingTop: 44,
+  },
+  upcomingTitle: {
+    color: colors.white,
+    marginBottom: 3,
+  },
+  upcomingMeta: {
+    color: 'rgba(255,255,255,0.82)',
+    marginBottom: 10,
+  },
+  upcomingMetaRow: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  upcomingEmpty: {
+    paddingVertical: 14,
+  },
+  destCarousel: {
+    gap: 12,
+    paddingRight: 8,
+  },
+  destSlide: {
+    width: 168,
+  },
+  destSlidePhoto: {
+    height: 210,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+    ...shadows.soft,
+  },
+  destSlidePhotoImage: {
+    borderRadius: radius.lg,
+  },
+  destSlideBody: {
+    padding: 14,
+  },
+  destSlideName: {
+    color: colors.white,
+    marginBottom: 2,
+  },
+  destSlideMood: {
+    color: 'rgba(255,255,255,0.8)',
+    marginBottom: 4,
+  },
+  destSlideBlurb: {
+    color: 'rgba(255,255,255,0.66)',
+  },
+  promoCard: {
+    backgroundColor: colors.tealSoft,
+    borderRadius: radius.lg,
+    padding: 18,
+    marginBottom: 14,
+  },
+  promoHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 14,
+  },
+  promoIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  promoTitle: {
+    marginBottom: 1,
+  },
+  promoText: {
+    color: colors.secondary,
+  },
+  promoButton: {
+    minHeight: 48,
+  },
+
+  // ---- Explore ----
+  exploreSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.line,
+    paddingHorizontal: 14,
+    minHeight: 50,
+    gap: 8,
+    marginBottom: 12,
+  },
+  exploreSearchInput: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: 14,
+    color: colors.ink,
+    paddingVertical: 12,
+  },
+  chipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 4,
+    paddingRight: 10,
+    marginBottom: 16,
+  },
+  destGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  destGridCard: {
+    width: '47%',
+    flexGrow: 1,
+    maxWidth: 230,
+  },
+  destGridPhoto: {
+    height: 190,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
+    ...shadows.soft,
+  },
+  destGridPhotoImage: {
+    borderRadius: radius.lg,
+  },
+  destGridBody: {
+    padding: 14,
+  },
+  destGridName: {
+    color: colors.white,
+    marginBottom: 2,
+  },
+  destGridMood: {
+    color: 'rgba(255,255,255,0.8)',
+  },
+  exploreSection: {
+    marginTop: 24,
+  },
+  exploreNoResults: {
+    paddingVertical: 10,
+  },
+  collectionCard: {
+    marginBottom: 12,
+  },
+  collectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  collectionThumb: {
+    width: 62,
+    height: 62,
+    borderRadius: radius.md,
+  },
+  collectionBody: {
+    flex: 1,
+  },
+
+  // ---- My Trips ----
+  tripsSection: {
+    marginBottom: 20,
+  },
+  tripsSectionLabel: {
+    marginBottom: 10,
+    fontSize: 13,
+  },
+  tripsCard: {
+    overflow: 'hidden',
+  },
+  tripsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+  },
+  tripsRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  tripsThumb: {
+    width: 54,
+    height: 54,
+    borderRadius: radius.md,
+  },
+  tripsRowText: {
+    flex: 1,
+  },
+  tripsNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 3,
+  },
+  tripsMeta: {
+    flexShrink: 1,
+  },
+  tripsEmptyCard: {
+    paddingVertical: 10,
+  },
+  statusChipTeal: {
+    backgroundColor: colors.tealSoft,
+  },
+  statusChipTealText: {
+    color: colors.forest,
+    fontSize: 10,
+    letterSpacing: 1,
+  },
+  statusChipNeutral: {
+    backgroundColor: colors.surfaceMuted,
+  },
+  statusChipNeutralText: {
+    color: colors.secondary,
+    fontSize: 10,
+    letterSpacing: 1,
+  },
+
+  // ---- Plan Trip wizard ----
+  wizardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 16,
+    paddingTop: 4,
+  },
+  wizardBack: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.soft,
+  },
+  wizardProgressWrap: {
+    flex: 1,
+    gap: 5,
+  },
+  wizardProgressText: {
+    fontSize: 10.5,
+  },
+  wizardIntro: {
+    marginBottom: 14,
+  },
+  wizardTitle: {
+    marginTop: 4,
+  },
+  wizardCard: {
+    marginBottom: 16,
+  },
+  wizardGroupLabel: {
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  suggestionWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  wizardFigureRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  wizardFigure: {
+    flex: 1,
+  },
+  wizardOptionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  wizardOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+  },
+  wizardOptionActive: {
+    borderColor: colors.forest,
+    backgroundColor: colors.tealSoft,
+  },
+  wizardOptionDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: colors.lineStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  wizardOptionDotActive: {
+    backgroundColor: colors.forest,
+    borderColor: colors.forest,
+  },
+  wizardOptionText: {
+    color: colors.inkSoft,
+  },
+  wizardOptionTextActive: {
+    color: colors.forestDeep,
+    fontFamily: fonts.semibold,
+  },
+  wizardPaceRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 14,
+  },
+  wizardPace: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 46,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+  },
+  wizardPaceActive: {
+    borderColor: colors.forest,
+    backgroundColor: colors.tealSoft,
+  },
+  wizardPaceText: {
+    color: colors.secondary,
+    textTransform: 'capitalize',
+  },
+  wizardPaceTextActive: {
+    color: colors.forest,
+  },
+  wizardInterest: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+  },
+  wizardInterestActive: {
+    borderColor: colors.forest,
+    backgroundColor: colors.tealSoft,
+  },
+  wizardNotesField: {
+    marginTop: 4,
+  },
+  wizardNotesInput: {
+    minHeight: 74,
+    textAlignVertical: 'top',
+    paddingTop: 12,
+  },
+  wizardHint: {
+    marginBottom: 14,
+  },
+  summaryBlock: {
+    marginBottom: 12,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  summaryRowLast: {
+    borderBottomWidth: 0,
+  },
+  summaryLabel: {
+    width: 86,
+  },
+  summaryEdit: {
+    marginLeft: 'auto',
+    width: 44,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.md,
+    backgroundColor: colors.tealSoft,
+  },
+  summaryEditSmall: {
+    color: colors.forest,
+    fontSize: 11.5,
+  },
+  generateSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 14,
+  },
+  generateSummaryText: {
+    flex: 1,
+  },
+  wizardGenerateButton: {
+    marginTop: 4,
+  },
+  wizardFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 10,
+  },
+  wizardFooterButton: {
+    flex: 1,
+  },
+
+  // ---- Itinerary day selector ----
+  sectionBlock: {
+    marginTop: 26,
+  },
+  dayChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 16,
+    paddingBottom: 4,
+  },
+  dayChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+  },
+  dayChipActive: {
+    backgroundColor: colors.forest,
+    borderColor: colors.forest,
+  },
+  dayChipText: {
+    color: colors.secondary,
+  },
+  dayChipTextActive: {
+    color: colors.white,
+  },
+
+  unavailableSecondary: {
+    marginTop: 10,
+  },
+  unavailableCard: {
+    paddingVertical: 10,
+  },
+
+  // ---- AI Assistant ----
+  assistantScreen: {
+    flex: 1,
+    minHeight: 520,
+  },
+  assistantHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+    paddingTop: 4,
+  },
+  assistantLog: {
+    flexGrow: 0,
+  },
+  assistantLogContent: {
+    paddingBottom: 14,
+  },
+  assistantIntro: {
+    marginBottom: 14,
+  },
+  assistantIntroText: {
+    marginTop: 4,
+  },
+  promptChipsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4,
+  },
+  promptChip: {
+    marginBottom: 2,
+  },
+  assistantBubbleRow: {
+    flexDirection: 'row',
+    marginBottom: 10,
+  },
+  assistantBubbleRowUser: {
+    justifyContent: 'flex-end',
+  },
+  assistantBubbleRowAssistant: {
+    justifyContent: 'flex-start',
+  },
+  typingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  typingText: {
+    color: colors.secondary,
+  },
+  assistantComposer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    marginTop: 8,
+  },
+  assistantInput: {
+    flex: 1,
+    marginBottom: 0,
+    minHeight: 48,
+    textAlignVertical: 'center',
+  },
+  assistantSend: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.forest,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.soft,
+  },
+  assistantSendDisabled: {
+    opacity: 0.45,
+  },
+
 });

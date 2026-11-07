@@ -1,29 +1,33 @@
+// Approved AITinerary mobile palette
+// (see AITinerary-mobile-only-design.md §3)
 export const colors = {
-  canvas: '#F3F1E7',
+  canvas: '#F8FAF9', // app background
   surface: '#FFFFFF',
-  surfaceAlt: '#F7F5EC',
-  surfaceMuted: '#EDEBDF',
-  ink: '#1C2B20',
-  inkSoft: '#526054',
-  muted: '#8A9285',
-  line: '#E3E0D3',
-  lineStrong: '#D3D0C2',
-  forest: '#2E4A33',
-  forestDeep: '#1F3423',
-  teal: '#156C61',
-  tealSoft: '#DDE9E2',
-  sage: '#A7B7A0',
-  sageSoft: '#E8EDE2',
-  clay: '#C86F45',
-  claySoft: '#F4E3D8',
-  sand: '#E8D9BF',
-  cream: '#EFEDE1',
+  surfaceAlt: '#F1F6F5',
+  surfaceMuted: '#EAF0EE',
+  ink: '#123C3A', // deep teal — headings and strong text
+  inkSoft: '#172B3A', // main body text
+  secondary: '#687784',
+  muted: '#9AA5AC',
+  line: '#E3EBEA',
+  lineStrong: '#CFDAD8',
+  forest: '#0D9C9A', // primary teal — primary actions + active navigation
+  forestDeep: '#123C3A',
+  teal: '#0D9C9A',
+  tealSoft: '#DDF4F0', // soft teal highlight surfaces
+  sage: '#63A08F',
+  sageSoft: '#E3F0EB',
+  clay: '#F0785A', // coral — small accents, used sparingly
+  claySoft: '#FBE4DB',
+  sand: '#F6E8D6',
+  cream: '#FFF9F0',
   white: '#FFFFFF',
-  danger: '#B4463A',
-  dangerSoft: '#F8E9E6',
-  warning: '#B2762B',
-  warningSoft: '#FBF2E0',
-  overlay: 'rgba(18, 30, 21, 0.55)',
+  success: '#25865A',
+  danger: '#B94A48',
+  dangerSoft: '#F7E3E2',
+  warning: '#B7791F',
+  warningSoft: '#F9EFDA',
+  overlay: 'rgba(18, 60, 58, 0.55)',
 };
 
 export const fonts = {
@@ -32,9 +36,6 @@ export const fonts = {
   semibold: 'Inter_600SemiBold',
   bold: 'Inter_700Bold',
   black: 'Inter_800ExtraBold',
-  serif: 'PlayfairDisplay_600SemiBold',
-  serifBold: 'PlayfairDisplay_700Bold',
-  serifItalic: 'PlayfairDisplay_600SemiBold_Italic',
 };
 
 export const radius = {

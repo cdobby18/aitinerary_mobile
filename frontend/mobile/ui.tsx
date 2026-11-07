@@ -30,30 +30,30 @@ type TextVariant =
 
 const textVariants = StyleSheet.create({
   display: {
-    fontFamily: fonts.serif,
-    fontSize: 38,
-    lineHeight: 44,
+    fontFamily: fonts.black,
+    fontSize: 34,
+    lineHeight: 42,
     letterSpacing: -0.8,
     color: colors.ink,
   },
   hero: {
-    fontFamily: fonts.serif,
-    fontSize: 34,
-    lineHeight: 40,
+    fontFamily: fonts.black,
+    fontSize: 30,
+    lineHeight: 38,
     letterSpacing: -0.6,
     color: colors.ink,
   },
   h1: {
-    fontFamily: fonts.serif,
-    fontSize: 30,
-    lineHeight: 36,
+    fontFamily: fonts.bold,
+    fontSize: 27,
+    lineHeight: 34,
     letterSpacing: -0.5,
     color: colors.ink,
   },
   h2: {
-    fontFamily: fonts.serif,
-    fontSize: 24,
-    lineHeight: 30,
+    fontFamily: fonts.bold,
+    fontSize: 21,
+    lineHeight: 28,
     letterSpacing: -0.3,
     color: colors.ink,
   },
@@ -353,16 +353,19 @@ type NavItem = {
   activeIcon: IoniconName;
 };
 
-const navItems: NavItem[] = [
-  { key: 'plan', label: 'Plan', icon: 'compass-outline', activeIcon: 'compass' },
-  { key: 'saved', label: 'Saved', icon: 'bookmark-outline', activeIcon: 'bookmark' },
-  { key: 'insights', label: 'Insights', icon: 'sparkles-outline', activeIcon: 'sparkles' },
+const navItems: Array<{ key: TabKeyUnion; label: string; icon: IoniconName; activeIcon: IoniconName }> = [
+  { key: 'home', label: 'Home', icon: 'home-outline', activeIcon: 'home' },
+  { key: 'trips', label: 'My Trips', icon: 'briefcase-outline', activeIcon: 'briefcase' },
+  { key: 'explore', label: 'Explore', icon: 'compass-outline', activeIcon: 'compass' },
   { key: 'profile', label: 'Profile', icon: 'person-outline', activeIcon: 'person' },
 ];
 
+const TabKeys = ['home', 'trips', 'explore', 'profile'] as const;
+export type TabKeyUnion = (typeof TabKeys)[number];
+
 type BottomNavProps = {
-  active: string;
-  onChange: (key: 'plan' | 'saved' | 'insights' | 'profile') => void;
+  active: TabKeyUnion;
+  onChange: (key: TabKeyUnion) => void;
 };
 
 export function BottomNav({ active, onChange }: BottomNavProps) {
@@ -379,7 +382,7 @@ export function BottomNav({ active, onChange }: BottomNavProps) {
               accessibilityState={{ selected: isActive }}
               accessibilityLabel={item.label}
               style={styles.navItem}
-              onPress={() => onChange(item.key as 'plan' | 'saved' | 'insights' | 'profile')}
+              onPress={() => onChange(item.key)}
             >
               <View style={[styles.navIconWrap, isActive && styles.navIconWrapActive]}>
                 <Ionicons
