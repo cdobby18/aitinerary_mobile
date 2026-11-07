@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 
-from backend.database import SessionLocal, User, Session, SavedTrip, init_db
+from backend.database import SessionLocal, User, Session, SavedTrip, Notification, init_db
 
 TOKEN_TTL_DAYS = 30
 
@@ -227,6 +227,56 @@ def delete_saved_trip(user_id: int, trip_id: int) -> bool:
         db.delete(trip)
         db.commit()
         return True
+
+
+def create_notification(user_id: int, kind: str, title: str, body: str) -> None:
+    with SessionLocal() as db:
+        db.add(Notification(user_id=user_id, kind=kind, title=title, body=body))
+        db.commit()
+
+
+def list_notifications(user_id: int) -> List[Dict[str, Any]]:
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(Notification)
+            .where(Notification.user_id == user_id)
+            .order_by(Notification.created_at.desc(), Notification.id.desc())
+            .limit(50)
+        ).all()
+        return [
+            {
+                "id": row.id,
+                "kind": row.kind,
+                "title": row.title,
+                "body": row.body,
+                "read": bool(row.read),
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+
+
+def unread_notification_count(user_id: int) -> int:
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(Notification.read).where(
+                Notification.user_id == user_id, Notification.read.is_(False)
+            )
+        ).all()
+        return len(rows)
+
+
+def mark_notifications_read(user_id: int) -> int:
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(Notification).where(
+                Notification.user_id == user_id, Notification.read.is_(False)
+            )
+        ).all()
+        for row in rows:
+            row.read = True
+        db.commit()
+        return len(rows)
 
 
 init_db()

@@ -16,12 +16,16 @@ from ai.orchestrator import orchestrate
 from backend.models import BudgetSummary, DayPlan, Itinerary, Risk, Stop, TransportLeg, TripBrief
 from backend.auth import (
     authenticate_user,
+    create_notification,
     create_password_reset,
     create_session,
     create_user,
     delete_saved_trip,
     get_user_for_token,
+    list_notifications,
     list_saved_trips,
+    mark_notifications_read,
+    unread_notification_count,
     refresh_session,
     reset_password,
     revoke_session,
@@ -30,7 +34,9 @@ from backend.auth import (
 )
 from backend.email import send_email
 from backend.countries import country_for_region, get_country, list_countries
+from backend.destinations import featured_destinations, search_destinations
 from backend.regions import get_destination_snapshot, get_region_profile, get_stop_profile
+from backend.weather import get_weather as get_weather_data
 from backend.tours import best_tour_anywhere, chat_tour_answer, curated_catalog, enrich_stop
 
 # Cross-region hints so the chatbot can attribute places to their destination.
@@ -57,6 +63,7 @@ app.add_middleware(
 REGION_CONFIG = {
     "manila": {"name": "Metro Manila", "rainy_months": ["June", "July", "August", "September"]},
     "cebu": {"name": "Cebu", "rainy_months": ["June", "July", "August", "September"]},
+    "bohol": {"name": "Bohol", "rainy_months": ["June", "July", "August", "September"]},
     "palawan": {"name": "Palawan", "rainy_months": ["June", "July", "August", "September", "October"]},
     "tokyo": {"name": "Tokyo", "rainy_months": ["June", "July", "September"]},
     "singapore": {"name": "Singapore", "rainy_months": ["November", "December", "January"]},
@@ -246,6 +253,34 @@ def get_maps_config():
     }
 
 
+@app.get("/destinations/featured")
+def destinations_featured():
+    """Curated destination feed for the Home carousel / Explore screen."""
+    return {"destinations": featured_destinations()}
+
+
+@app.get("/destinations/search")
+def destinations_search(q: str = ""):
+    """Destination suggestions for the hero search and Explore screen.
+
+    Only searches regions the planner can actually build — no invented places.
+    """
+    results = search_destinations(q)
+    if not results:
+        raise HTTPException(
+            status_code=404,
+            detail="That destination is not in the beta yet.",
+        )
+    return {"query": q, "destinations": results}
+
+
+@app.get("/weather/{region}")
+def weather_for_region(region: str, month: Optional[str] = None):
+    """Shared weather source: live Open-Meteo for trips happening now,
+    clearly-labeled seasonal estimates otherwise. Never fake live data."""
+    return get_weather_data(region, month)
+
+
 @app.get("/countries")
 def get_countries():
     return {"countries": list_countries()}
@@ -302,6 +337,12 @@ def signup(payload: Dict[str, Any]):
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     token = create_session(user["id"])
+    create_notification(
+        user["id"],
+        "welcome",
+        "Welcome to AITinerary",
+        "Start with a destination, and we will shape the route around your budget and pace.",
+    )
     verification_token = user.get("verification_token")
     email_sent = send_email(
         email,
@@ -340,6 +381,22 @@ def logout(authorization: Optional[str] = Header(default=None, alias="Authorizat
 def me(authorization: Optional[str] = Header(default=None, alias="Authorization")):
     user = _require_user(authorization)
     return {"user": user}
+
+
+@app.get("/notifications")
+def notifications_list(authorization: Optional[str] = Header(default=None, alias="Authorization")):
+    user = _require_user(authorization)
+    return {
+        "notifications": list_notifications(user["id"]),
+        "unread": unread_notification_count(user["id"]),
+    }
+
+
+@app.post("/notifications/read")
+def notifications_mark_read(authorization: Optional[str] = Header(default=None, alias="Authorization")):
+    user = _require_user(authorization)
+    updated = mark_notifications_read(user["id"])
+    return {"ok": True, "updated": updated}
 
 
 @app.get("/trips/saved")
@@ -458,25 +515,24 @@ def _extract_month(prompt: str):
     return None
 
 
-def _extract_budget(prompt: str):
+def _extract_budget(prompt: str) -> Optional[float]:
     match = re.search(r"(?:php|₱|peso|budget|spend|for)\s*(\d+(?:,\d{3})*(?:\.\d+)?)", prompt, re.IGNORECASE)
     if not match:
-        match = re.search(r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:k|kphp|thousand)", prompt, re.IGNORECASE)
+        match = re.search(r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:k|kphp|thousand)\b", prompt, re.IGNORECASE)
         if not match:
-            return 20000.0
-        value = float(match.group(1).replace(",", "")) * 1000
-        return value
+            return None
+        return float(match.group(1).replace(",", "")) * 1000
     return float(match.group(1).replace(",", ""))
 
 
-def _extract_days(prompt: str):
+def _extract_days(prompt: str) -> Optional[int]:
     match = re.search(r"(\d+)\s*(?:day|days)", prompt, re.IGNORECASE)
     if match:
         return max(1, min(30, int(match.group(1))))
-    return 4
+    return None
 
 
-def _extract_travelers(prompt: str):
+def _extract_travelers(prompt: str) -> Optional[str]:
     lowered = prompt.lower()
     if "family" in lowered or "with kids" in lowered:
         return "family"
@@ -484,16 +540,20 @@ def _extract_travelers(prompt: str):
         return "friends"
     if "couple" in lowered or "two people" in lowered or "2 people" in lowered:
         return "couple"
-    return "solo"
+    if any(word in lowered for word in ["solo", "alone", "myself", "by myself", "just me"]):
+        return "solo"
+    return None
 
 
-def _extract_pace(prompt: str):
+def _extract_pace(prompt: str) -> Optional[str]:
     lowered = prompt.lower()
     if "relaxed" in lowered or "slow" in lowered:
         return "relaxed"
     if "packed" in lowered or "busy" in lowered or "full" in lowered:
         return "packed"
-    return "balanced"
+    if "balanced" in lowered:
+        return "balanced"
+    return None
 
 
 def _extract_interests(prompt: str):
@@ -514,18 +574,59 @@ def _extract_interests(prompt: str):
     return interests
 
 
-def _trip_brief_from_prompt(prompt: str) -> TripBrief:
-    destination_text = prompt.strip() or "Plan a Cebu trip"
+def _guess_message_region(message: str):
+    """Determine which region a chat message refers to (or None)."""
+    lowered = message.lower()
+    for region_key in REGION_CONFIG:
+        if region_key in lowered or REGION_CONFIG[region_key]["name"].lower() in lowered:
+            return region_key
+    for region_key, hints in REGION_KEYS_HINTS.items():
+        for keyword, _display in hints:
+            if keyword in lowered:
+                return region_key
+    return None
+
+
+def _trip_brief_from_prompt(prompt: str, context: Optional[dict] = None) -> TripBrief:
+    """Build a TripBrief from a chat message, falling back to the active
+    trip context so follow-ups like "make it 5 days" keep working."""
+    context = context or {}
+    destination_text = prompt.strip()
+
     region, destination = _guess_region_from_destination(destination_text)
-    month = _extract_month(destination_text)
+    if region == "cebu" and destination == "Cebu" and context.get("region"):
+        # No explicit destination detected in the message; continue the
+        # conversation in the region already on screen.
+        region = context["region"]
+        destination = context.get("destination") or REGION_CONFIG[region]["name"]
+
+    region = _guess_message_region(destination_text) or region
+
+    days = _extract_days(destination_text)
+    if days is None:
+        days = int(context.get("days") or 4)
+    budget = _extract_budget(destination_text)
+    if budget is None:
+        budget = float(context.get("budget") or 20000)
+    interests = _extract_interests(destination_text)
+    if interests == ["beaches", "local food"] and context.get("interests"):
+        interests = list(context["interests"])
+    pace = _extract_pace(destination_text)
+    if pace == "balanced" and context.get("pace"):
+        pace = context["pace"]
+    travelers = _extract_travelers(destination_text)
+    if travelers == "solo" and context.get("travelers"):
+        travelers = context["travelers"]
+    month = _extract_month(destination_text) or context.get("month")
+
     brief = TripBrief(
         destination=destination,
         region=region,
-        days=_extract_days(destination_text),
-        budget=_extract_budget(destination_text),
-        interests=_extract_interests(destination_text),
-        pace=_extract_pace(destination_text),
-        travelers=_extract_travelers(destination_text),
+        days=days or 4,
+        budget=budget if budget is not None else 20000.0,
+        interests=interests,
+        pace=pace or "balanced",
+        travelers=travelers or "solo",
         month=month,
         notes=destination_text,
     )
@@ -546,78 +647,300 @@ def chat_plan(payload: dict):
     }
 
 
-def _chat_reply(message: str) -> dict:
+def _currency_for(region_key: str) -> str:
+    return {"tokyo": "¥", "singapore": "S$"}.get(region_key, "₱")
+
+
+def _fmt(region_key: str, value: float) -> str:
+    prefix = _currency_for(region_key)
+    return f"{prefix}{value:,.0f}"
+
+
+def _budget_estimate_text(region_key: str, days: int, travelers: str) -> str:
+    """Run the real budget agent for a hypothetical trip and summarize it."""
+    from ai.orchestrator import budget_agent
+
+    class _MiniBrief:
+        pass
+
+    brief = _MiniBrief()
+    brief.region = region_key
+    brief.days = days
+    brief.travelers = travelers
+    summary = budget_agent(list(range(days)), brief)
+    parts = [
+        f"{_fmt(region_key, summary['accommodation'])} stays",
+        f"{_fmt(region_key, summary['food'])} food",
+        f"{_fmt(region_key, summary['activities'])} activities",
+        f"{_fmt(region_key, summary['transport'])} transport",
+    ]
+    total = " + ".join(parts)
+    return (
+        f"I ran the budget agent: {days} day(s) in {REGION_CONFIG[region_key]['name']} for a "
+        f"{travelers} traveler profile. {total} — about {_fmt(region_key, summary['total'])} all-in."
+    )
+
+
+def _best_time_text(region_key: str) -> str:
+    rainy = set(REGION_CONFIG[region_key].get("rainy_months") or [])
+    month_list = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
+    ]
+    good = [m for m in month_list if m not in rainy]
+    return (
+        f"Best months for {REGION_CONFIG[region_key]['name']}: {', '.join(good[:5])}. "
+        f"Expect heavier rain around {', '.join(sorted(rainy)[:3]) if rainy else 'variable months'} — "
+        f"I keep flexible afternoon buffers on wet-season plans."
+    )
+
+
+def _packing_text(region_key: str, month: Optional[str]) -> str:
+    profile = REGION_CONFIG[region_key]
+    rainy = set(profile.get("rainy_months") or [])
+    is_rainy = (month in rainy) if month else None
+    base = "Light layers, comfy walking shoes, sunscreen, and a reusable bottle."
+    if is_rainy is True:
+        extra = f" For {month}, add a compact rain jacket and quick-dry shoes — {profile['name']} sees heavier showers then."
+    elif is_rainy is False:
+        extra = f" {month} is outside the main rainy window, so breezy clothes should cover it."
+    else:
+        extra = " Tell me your travel month and I'll tailor the list to the season."
+    return f"{base}{extra}"
+
+
+_SUGGESTIONS = {
+    "planning": ["Make it more relaxed", "Best months to visit?", "How much food costs?", "What should I pack?"],
+    "tour": ["Plan a full day around this", "What else is nearby?", "Best months to visit?"],
+    "budget": ["Plan a trip inside that budget", "What should I pack?", "Best months to visit?"],
+    "best_time": ["Plan a trip for that month", "How much will it cost?", "What should I pack?"],
+    "packing": ["Plan a trip around the forecast", "Best months to visit?", "How much will it cost?"],
+    "fallback": ["Plan a trip for me", "Best months to visit?", "How much will it cost?"],
+}
+
+_GREETINGS = (
+    "Hi! I'm your AITinerary assistant. I can build day-by-day plans, check budgets with the real "
+    "cost engine, answer opening hours and fees for every stop, and tailor packing lists by season. "
+    "Where are we headed — Cebu, Manila, Palawan, Tokyo, or Singapore?",
+)
+
+
+def _chat_reply(message: str, context: Optional[dict] = None) -> dict:
     lowered = message.lower()
-    planning_words = ("plan", "trip", "itinerary", "days", "visit", "travel")
+    context = context or {}
+    planning_words = ("plan", "trip", "itinerary", "days", "visit", "travel", "make it", "change", "extend", "add")
+
+    def finish(reply: str, intent: str, itinerary: Optional[dict] = None) -> dict:
+        out: dict = {"reply": reply, "intent": intent, "suggestions": _SUGGESTIONS.get(intent, _SUGGESTIONS["fallback"])}
+        if itinerary:
+            out["itinerary"] = itinerary
+        out["context"] = {
+            "region": context.get("region") or (itinerary or {}).get("region_key"),
+            "days": context.get("days"),
+            "budget": context.get("budget"),
+            "travelers": context.get("travelers"),
+            "month": context.get("month"),
+        }
+        return out
+
+    # ---------------------------------------------------------------- greet
+    if lowered.strip() in {"hi", "hello", "hey", "yo", "good morning", "good evening"} or "help" in lowered and len(lowered) < 12:
+        return finish(_GREETINGS[0], "fallback")
+
+    # Intent priority: explicit questions ("how much…", "when should I…")
+    # beat generic planning words like "trip"/"visit" inside the question.
+    imperative = re.search(r"\b(plan|build|create|generate|make it|extend|change|add)\b", lowered)
+    budget_q = any(word in lowered for word in ("how much", "cost", "budget", "expensive", "price"))
+    time_q = any(
+        phrase in lowered
+        for phrase in ("best month", "best time", "when should i", "when to visit", "when is")
+    )
+    mentioned = _guess_message_region(message)
+
+    # -------------------------------------------------------- budget intent
+    if budget_q and not imperative:
+        region_key = mentioned or context.get("region") or "cebu"
+        if region_key not in REGION_CONFIG:
+            region_key = "cebu"
+        days = _extract_days(lowered) or int(context.get("days") or 4)
+        travelers = _extract_travelers(lowered) or context.get("travelers") or "solo"
+        text = _budget_estimate_text(region_key, days, travelers)
+        month = _extract_month(message) or context.get("month")
+        if month:
+            text = f"{text} Weather around {month}: keep flexible afternoon buffers if it lands in the wet window."
+        return finish(text, "budget")
+
+    # ------------------------------------------------------- best-time intent
+    if time_q and not imperative:
+        region_key = mentioned or context.get("region") or "cebu"
+        if region_key not in REGION_CONFIG:
+            region_key = "cebu"
+        return finish(_best_time_text(region_key), "best_time")
+
+    # ------------------------------------------------------------- planning
     is_planning = any(word in lowered for word in planning_words)
-
-    # Check the destination the user actually mentions first, so Tsukiji
-    # questions never answer with a wrong-city tour.
-    mentioned = None
-    if not is_planning:
-        for region_key in REGION_CONFIG:
-            if region_key in lowered or REGION_CONFIG[region_key]["name"].lower() in lowered:
-                mentioned = region_key
-                break
-            for keyword, _display in REGION_KEYS_HINTS.get(region_key, []):
-                if keyword in lowered:
-                    mentioned = region_key
-                    break
-            if mentioned:
-                break
-        if mentioned:
-            tour_reply = chat_tour_answer(mentioned, lowered)
-            if tour_reply:
-                return {"reply": tour_reply}
-
-        # Fall back to the most specific unique place match across all regions.
-        anywhere = best_tour_anywhere(lowered)
-        if anywhere:
-            fee = anywhere["fee"]
-            fee_text = "Free entry" if fee == 0 else f"≈{fee:,} {anywhere.get('currency', '')}"
-            return {
-                "reply": (
-                    f"{anywhere['name']} ({anywhere['area']}): {anywhere['description']} "
-                    f"Hours: {anywhere['hours']}. {fee_text}. "
-                    f"Plan for roughly {max(anywhere['duration_min'] // 60, 1)} "
-                    f"hour{'s' if anywhere['duration_min'] > 60 else ''} — best in the {anywhere['best_time']}. "
-                    f"Local tip: {anywhere['insider_tip']}"
-                )
-            }
-
     if is_planning:
-        brief = _trip_brief_from_prompt(message)
+        brief = _trip_brief_from_prompt(message, context)
         itinerary = generate_trip(brief)
-        return {
-            "reply": f"I built a {brief.days}-day {brief.destination} itinerary for {brief.travelers} travelers at a {brief.pace} pace.",
+        itinerary = dict(itinerary)
+        itinerary["region_key"] = brief.region
+        note = ""
+        days_in_message = _extract_days(message)
+        if days_in_message is None and context.get("days"):
+            note = f" I kept your {context['days']}-day length."
+        if _extract_budget(message) is None and context.get("budget"):
+            note += f" Budget held at {_fmt(brief.region, context['budget'])}."
+        replacing = bool(context.get("region"))
+        if replacing:
+            reply = (
+                f"Proposed change: a {brief.days}-day {brief.destination} plan for a {brief.travelers} profile, "
+                f"{brief.pace} pace{note}. This would replace your current plan — review it and reply "
+                f"'apply' when you're happy with it."
+            )
+        else:
+            reply = (
+                f"Fresh build: a {brief.days}-day {brief.destination} plan for a {brief.travelers} profile, "
+                f"{brief.pace} pace{note}. Review the proposal and open it when it looks right."
+            )
+        out = finish(reply, "planning", itinerary)
+        stops_count = sum(len((day or {}).get("stops") or []) for day in (itinerary.get("days") or []))
+        out["proposal"] = {
+            "type": "itinerary-rebuild",
+            "destination": itinerary.get("destination"),
+            "region": itinerary.get("region"),
+            "days": itinerary.get("days") and len(itinerary["days"]) or brief.days,
+            "budget_total": itinerary.get("total_budget"),
+            "pace": brief.pace,
+            "travelers": brief.travelers,
+            "stops_count": stops_count,
+            "replaces_previous": replacing,
+        }
+        # The UI can send this straight back in `context` so typed
+        # confirmations ("apply") work across turns.
+        out["context"]["pending_proposal"] = {
             "itinerary": itinerary,
+            "region": brief.region,
+            "destination": itinerary.get("destination"),
         }
+        return out
 
+    # Explicit confirmation of a pending itinerary proposal.
+    if lowered.strip() in {"apply", "yes", "confirm", "apply it", "yes apply", "looks good", "use it"}:
+        pending = context.get("pending_proposal")
+        if pending and isinstance(pending, dict) and pending.get("itinerary"):
+            itinerary = dict(pending["itinerary"])
+            itinerary["region_key"] = pending.get("region") or itinerary.get("region_key")
+            reply = (
+                f"Applied: your {itinerary.get('days') and 'itinerary' or 'plan'} is now open in your itinerary view."
+            )
+            out = finish(reply, "apply-itinerary", itinerary)
+            out["applied"] = True
+            return out
+        return finish(
+            "Nothing to apply yet — ask me to plan or change a trip first, then say 'apply'.",
+            "fallback",
+        )
+
+    # Explicit discards keep the workspace untouched.
+    if lowered.strip() in {"discard", "no", "cancel", "keep it", "never mind", "not now"}:
+        if context.get("pending_proposal"):
+            return finish("Discarded — your current plan is untouched.", "fallback")
+        return finish("Nothing pending to discard. What should we plan?", "fallback")
+
+    # ------------------------------------------------- place-specific facts
+    if mentioned:
+        tour_reply = chat_tour_answer(mentioned, lowered)
+        if tour_reply:
+            return finish(tour_reply, "tour")
+    anywhere = best_tour_anywhere(lowered)
+    if anywhere:
+        fee = anywhere["fee"]
+        fee_text = "Free entry" if fee == 0 else f"≈{fee:,} {anywhere.get('currency', '')}"
+        return finish(
+            (
+                f"{anywhere['name']} ({anywhere['area']}): {anywhere['description']} "
+                f"Hours: {anywhere['hours']}. {fee_text}. "
+                f"Plan for roughly {max(anywhere['duration_min'] // 60, 1)} "
+                f"hour{'s' if anywhere['duration_min'] > 60 else ''} — best in the {anywhere['best_time']}. "
+                f"Local tip: {anywhere['insider_tip']}"
+            ),
+            "tour",
+        )
+
+    # ------------------------------------------------------- best-time intent
+    if "best month" in lowered or "best time" in lowered or "when should i go" in lowered or "when to visit" in lowered:
+        region_key = mentioned or context.get("region") or "cebu"
+        if region_key not in REGION_CONFIG:
+            region_key = "cebu"
+        return finish(_best_time_text(region_key), "best_time")
+
+    # -------------------------------------------------------- budget intent
+    if "budget" in lowered or "how much" in lowered or "cost" in lowered or "expensive" in lowered:
+        region_key = mentioned or _guess_message_region(str(context.get("region"))) or context.get("region") or "cebu"
+        if region_key not in REGION_CONFIG:
+            region_key = "cebu"
+        days = _extract_days(lowered) or int(context.get("days") or 4)
+        travelers = _extract_travelers(lowered) or context.get("travelers") or "solo"
+        text = _budget_estimate_text(region_key, days, travelers)
+        month = _extract_month(message) or context.get("month")
+        tour_reply = chat_tour_answer(region_key, lowered)
+        if tour_reply:
+            text = f"{tour_reply} {_budget_estimate_text(region_key, days, travelers)}"
+        if month:
+            text = f"{text} Weather around {month}: {REGION_CONFIG[region_key].get('season_note', 'use flexible afternoon buffers.')}"
+        return finish(text, "budget")
+
+    # ------------------------------------------------------- weather intent
     if "weather" in lowered or "rain" in lowered:
-        return {
-            "reply": "I can’t fetch a live forecast for a future month yet, but I do factor rainy-season risk into every itinerary. Tell me a destination and month and I’ll plan around it.",
-        }
-    if "budget" in lowered or "cost" in lowered:
-        return {
-            "reply": "Budgets scale by destination and traveler type. Share your destination, days, and traveler count and I’ll estimate accommodation, food, activities, and transport.",
-        }
-    if "pack" in lowered or "what to bring" in lowered:
-        return {
-            "reply": "Pack light layers, comfortable walking shoes, a rain jacket in wet months, sunscreen, and a reusable water bottle. I can tailor this once you pick a destination and month.",
-        }
-    if "save" in lowered or "saved" in lowered:
-        return {
-            "reply": "You can save any generated itinerary with the Save button. Signed-in users keep them in their account; guests keep them on this device.",
-        }
+        region_key = mentioned or context.get("region") or "cebu"
+        if region_key in REGION_CONFIG:
+            rainy = REGION_CONFIG[region_key].get("rainy_months") or []
+            month = _extract_month(message) or context.get("month")
+            if month:
+                season = "inside the wet window" if month in rainy else "outside the main rainy months"
+                reply = (
+                    f"{month} in {REGION_CONFIG[region_key]['name']} is {season}. The plan hero already shows the "
+                    f"live Open-Meteo forecast when the trip month is close — and every itinerary keeps a weather buffer."
+                )
+            else:
+                reply = (
+                    f"Heavy-rain window for {REGION_CONFIG[region_key]['name']}: {', '.join(rainy) if rainy else 'variable'}. "
+                    "Pick a month and press Generate — if it's within a week, the forecast is live."
+                )
+            return finish(reply, "best_time")
+        return finish(
+            "I factor rainy-season risk into every itinerary, and the plan hero shows live Open-Meteo forecasts. "
+            "Tell me a destination and month and I'll plan around it.",
+            "best_time",
+        )
 
-    return {
-        "reply": "I’m your travel planner. Tell me where, when, and who’s traveling, or ask about weather, budget, packing, or saved trips.",
-    }
+    # ------------------------------------------------------ packing intent
+    if "pack" in lowered or "bring" in lowered or "wear" in lowered:
+        region_key = mentioned or context.get("region") or "cebu"
+        if region_key not in REGION_CONFIG:
+            region_key = "cebu"
+        month = _extract_month(message) or context.get("month")
+        return finish(_packing_text(region_key, month), "packing")
+
+    # ---------------------------------------------------------- save intent
+    if "save" in lowered or "saved" in lowered:
+        return finish(
+            "Any plan I build lands in your Plan tab — hit Save there and signed-in accounts keep it online, "
+            "while guests keep trips on this device.",
+            "fallback",
+        )
+
+    # error-question avoidance: default hand-off
+    return finish(_GREETINGS[0], "fallback")
 
 
 @app.post("/chat")
 def chat(payload: dict):
-    message = (payload or {}).get("message") or (payload or {}).get("prompt") or ""
+    body = payload or {}
+    message = body.get("message") or body.get("prompt") or ""
     if not message or not str(message).strip():
         raise HTTPException(status_code=400, detail="Please provide a message.")
-    return _chat_reply(str(message))
+    context = body.get("context") if isinstance(body.get("context"), dict) else None
+    context = context or {}
+    # Normalise context keys the frontend sends.
+    return _chat_reply(str(message), context)

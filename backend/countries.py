@@ -5,7 +5,7 @@ COUNTRIES: Dict[str, Dict] = {
         "code": "PH",
         "currency": "PHP",
         "status": "active",
-        "regions": ["cebu", "manila", "palawan"],
+        "regions": ["cebu", "manila", "palawan", "bohol"],
         "default_region": "cebu",
     },
     "Japan": {

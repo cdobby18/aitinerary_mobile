@@ -58,6 +58,33 @@ REGION_PROFILES = {
             "default": {"area": "Downtown Cebu", "latitude": 10.2925, "longitude": 123.9059, "category": "Local Discovery", "cost": 250, "timing": "flexible"},
         },
     },
+    "bohol": {
+        "name": "Bohol",
+        "rainy_months": ["June", "July", "August", "September"],
+        "travel_style": "slow inland loops + island coast",
+        "base_daily_budget": 1600,
+        "best_for": ["nature", "beaches", "family"],
+        "highlights": [
+            "Chocolate Hills viewpoint",
+            "Loboc river cruise",
+            "Panglao island beaches",
+            "Tarsier sanctuary visit",
+        ],
+        "transport_hints": [
+            "Inland loops are easiest with a hired van or scooter.",
+            "Panglao is a short bridge hop from Tagbilaran.",
+            "River and island trips are calmest before midday.",
+        ],
+        "stop_profiles": {
+            "chocolate-hills": {"area": "Carmen", "latitude": 9.9247, "longitude": 124.1439, "category": "Nature", "cost": 300, "timing": "morning"},
+            "tarsier": {"area": "Corella", "latitude": 9.6839, "longitude": 123.9425, "category": "Nature", "cost": 250, "timing": "morning"},
+            "loboc": {"area": "Loboc River", "latitude": 9.6536, "longitude": 124.0281, "category": "Culture", "cost": 620, "timing": "late morning"},
+            "baclayon": {"area": "Baclayon", "latitude": 9.6636, "longitude": 123.8878, "category": "Heritage", "cost": 180, "timing": "midday"},
+            "alona": {"area": "Panglao", "latitude": 9.5721, "longitude": 123.7731, "category": "Beach", "cost": 400, "timing": "afternoon"},
+            "danao": {"area": "Danao Adventure Park", "latitude": 9.9858, "longitude": 124.1414, "category": "Adventure", "cost": 550, "timing": "afternoon"},
+            "default": {"area": "Tagbilaran / Panglao", "latitude": 9.6479, "longitude": 123.8551, "category": "Local Discovery", "cost": 240, "timing": "flexible"},
+        },
+    },
     "tokyo": {
         "name": "Tokyo",
         "rainy_months": ["June", "July", "September"],

@@ -178,3 +178,23 @@
 - Chat assistant now answers place questions with curated facts (hours, fees, tips) and attributes cross-region places correctly (Tsukiji → Tokyo, Kayangan → Palawan); destination detection extends to Tokyo/Singapore prompts.
 - Frontend stop cards show opening hours, the real description, and the insider tip; all amounts render in the destination's currency (₱ / ¥ / S$).
 - Tests extended to cover curated stop details, the tours endpoint, and chat tour answers (11/11 pass).
+
+## 2026-11-07 — Mobile-only design refresh (Home / My Trips / Explore / Profile)
+
+- Rebuilt the app navigation to match `AITinerary-mobile-only-design.md`: the bottom tab bar is now Home, My Trips, Explore, and Profile; the previous Plan/Saved/Insights tabs were retired (planner became a focused flow, Insights was dropped from the MVP).
+- New Home dashboard: brand header with notification bell (unread indicator + local notifications panel), hero with "Plan Smarter. Travel Better." and destination search with recent-search chips, four quick-action tiles (Plan Trip, Explore, Map, AI Assistant), upcoming-trip card from saved trips (with an empty state), a curated destination carousel labeled "Explore destinations", and the soft-teal AI assistant promo card.
+- New Explore screen: destination search, category chips (Beaches & Islands, Nature & Adventure, Food & Culture, City Breaks, Family-Friendly), a destination grid filtered by category/query, and curated collections. Unsupported searches render an honest "no matches" state.
+- My Trips screen replaces Saved: trips split into Upcoming and Past sections with status chips and per-section empty states.
+- Plan Trip flow is now a guided 5-step wizard (Destination → Dates & travelers → Preferences → Review → Generate) with progress bar, validation, review-and-edit steps, and an honest Generate CTA; focused flows hide the bottom tab bar per the spec.
+- The itinerary result screen gained a horizontally scrollable day selector; the AI assistant moved to a dedicated chat screen with suggested prompt chips, a fixed composer, and a typing indicator.
+- Theme tokens switched to the approved palette (teal #0D9C9A / deep teal #123C3A / soft teal #DDF4F0 / coral #F0785A / background #F8FAF9 / ink #172B3A) and headings moved to bold Inter. Playfair Display is no longer referenced anywhere except its unused package entry.
+- Search, Explore feeds, notifications, and curated collections are hardcoded frontend data for now; the backend additions they need (search/suggest endpoint, notifications, shared weather endpoint, curated feed, AI confirmation flow, structured chat replies, trip dates) are recorded as Planned items in ToDo_Table.md.
+- Verified with `tsc --noEmit` (clean), `expo export -p web` (bundles), and the backend unittest suite (11/11 pass).
+
+## 2026-11-07 — Fix: itinerary view crash on failed generation
+
+- Reproduced a crash reported after generating an itinerary: when the generation request failed, the focused itinerary view rendered `renderItinerary()` with no result data and threw on `result.budget_summary`, leaving a blank screen ("nothing happened").
+- Added a guarded render path in `renderMain`: `loading → loading state`, `result → itinerary`, otherwise a new "Itinerary unavailable" error state with Back to planner / Back to home actions.
+- Network fetch failures now surface a friendlier message ("Can't reach the planner service…") in both the wizard and the assistant instead of raw browser errors.
+- Verified headless (Chrome DevTools Protocol over the exported web bundle): full happy path renders the itinerary (hero, budget snapshot, reasoning, Day 1–4 selector, 8 stops), and the backend-down path renders the error state instead of a blank screen. `tsc --noEmit` clean; backend suite 11/11.
+- Note for local runs: the backend must be started from the repo root (`uvicorn backend.main:app --app-dir <repo root>`); launching `main:app` from inside `backend/` shadows the stdlib `email` module with `backend/email.py`.

@@ -10,6 +10,10 @@ Build a region-aware Philippines-first beta trip planner that works as a mobile 
 | P0 | Finalize architecture and contract stability | Done | Python backend + AI + mobile frontend are separated and functioning | Keep contract stable before new features |
 | P0 | Validate backend + AI orchestration | Done | API returns structured itinerary and risk data | Re-run smoke tests after any schema change |
 | P0 | Validate frontend and local API connectivity | Done | Expo app compiles and can fetch backend data | Keep local dev flow working |
+| P1 | Mobile-only design refresh (Home / My Trips / Explore / Profile) | Done | App now follows `AITinerary-mobile-only-design.md`: new Home dashboard, Explore screen, guided 5-step Plan Trip wizard, assistant chat screen, itinerary day selector, approved teal/coral palette | Continue with accessibility pass and simulator testing |
+| P1 | Destination search/suggest backend endpoint | Planned | Home hero search + Explore currently filter a hardcoded destination list; recent searches are device-local | Add `GET /destinations/search/?q=...` and shared suggestions data |
+| P1 | AI assistant confirmation flow for itinerary changes | Planned | Chat applies regenerated itineraries instantly; the design doc requires proposed-change → review → confirm → apply | Add diff/preview payload to `/chat` responses and a confirm step in the UI |
+| P1 | Shared backend weather endpoint | Planned | Only the frontend calls Open-Meteo directly, so the assistant and risk logic cannot see live forecasts | Move Open-Meteo calls behind the backend and label live vs seasonal estimates |
 | P1 | Improve region realism for Cebu, Manila, and Palawan | In Progress | Local transport, budget, risk, and day themes are more realistic and location-specific | Add more destination-specific area and cost values |
 | P1 | Weather-aware trip planning | Done | Live Open-Meteo current conditions and monthly forecast integrated | Keep tuning for edge cases |
 | P1 | Mobile UX polish and itinerary clarity | Done | Risk and backup plan are visible, with a premium dark mobile layout and form polish | Continue with realism and travel-data improvements |
@@ -21,6 +25,10 @@ Build a region-aware Philippines-first beta trip planner that works as a mobile 
 | P2 | Premium mobile experience enhancements | Done | Glassmorphism, dark luxury theme, layered cards, animated transitions, onboarding, and strong mobile interactions | Move to deeper realism and final UX validation |
 | P2 | Add deeper local data assumptions | In Progress | Expanded stop sets, coordinates, and budgets for 5 destinations | Continue tuning |
 | P2 | Centralize destination config | Done | Region-specific stop metadata is in `backend/regions.py` | Reuse this pattern for future countries |
+| P2 | Notifications backend | Planned | Home notification bell currently renders a hardcoded local list | Add a notifications table + unread-count endpoint tied to auth |
+| P2 | Curated/destinations feed endpoint | Planned | Home carousel, Explore featured cards, and curated collections are hardcoded in `theme.ts`; Bohol has no backend region data despite appearing in the UI | Add `GET /destinations/featured` and a Bohol region profile |
+| P2 | Trip start/end dates and status in the contract | Planned | My Trips splits Upcoming/Past from a free-text month field only | Add structured start/end dates to the trip contract for accurate status |
+| P2 | Structured chat reply format | Planned | Assistant returns prose + optional itinerary JSON; the UI has no structured preview cards or to-do chips | Define a typed chat response shape (message + proposed change + preview) |
 | P2 | Add external API integrations | Planned | Weather, maps, and transport provider APIs | Integrate after MVP is stable |
 | P3 | Expand beyond Philippines beta | In Progress | Japan and Singapore region data and frontend picks added | Add UI grouping and more regions |
 | P3 | Deploy and production readiness | In Progress | Auth, env config, DB, logging, CI, and Docker added | Continue hardening |
@@ -67,6 +75,8 @@ Build a region-aware Philippines-first beta trip planner that works as a mobile 
 - Trip save and share flow
 - User authentication and profile storage
 - Multi-country expansion scaffolding
+- Accessibility pass on the refreshed screens (dynamic type, contrast on photo overlays, 44pt targets audit)
+- Remove Playfair Display dependency (no longer used after the design refresh)
 
 ## Notes
 - Keep the scope narrow and realistic for the MVP.
