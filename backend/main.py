@@ -43,6 +43,7 @@ from backend.tours import best_tour_anywhere, chat_tour_answer, curated_catalog,
 REGION_KEYS_HINTS = {
     "manila": [("intramuros", "Metro Manila"), ("binondo", "Metro Manila"), ("quiapo", "Metro Manila")],
     "cebu": [("mactan", "Cebu"), ("cebu", "Cebu"), ("sirao", "Cebu"), ("carbon market", "Cebu")],
+    "bohol": [("chocolate hills", "Bohol"), ("tarsier", "Bohol"), ("loboc", "Bohol"), ("panglao", "Bohol"), ("alona", "Bohol"), ("tagbilaran", "Bohol")],
     "palawan": [("coron", "Palawan"), ("el nido", "Palawan"), ("puerto princesa", "Palawan"), ("honda bay", "Palawan"), ("nacpan", "Palawan")],
     "tokyo": [("tokyo", "Tokyo"), ("tsukiji", "Tokyo"), ("shibuya", "Tokyo"), ("shinjuku", "Tokyo"), ("asakusa", "Tokyo"), ("sensoji", "Tokyo"), ("meiji", "Tokyo")],
     "singapore": [("singapore", "Singapore"), ("marina bay", "Singapore"), ("supertree", "Singapore"), ("maxwell", "Singapore"), ("haji lane", "Singapore"), ("orchard", "Singapore"), ("little india", "Singapore")],
@@ -495,6 +496,14 @@ def _guess_region_from_destination(text: str):
         return "singapore", "Singapore"
     if "palawan" in lower or "coron" in lower or "el nido" in lower:
         return "palawan", "Palawan"
+    if (
+        "bohol" in lower
+        or "panglao" in lower
+        or "chocolate hills" in lower
+        or "loboc" in lower
+        or "tagbilaran" in lower
+    ):
+        return "bohol", "Bohol"
     if "manila" in lower or "metro manila" in lower or "quezon city" in lower:
         return "manila", "Metro Manila"
     if "cebu" in lower or "cebu city" in lower:
@@ -777,12 +786,12 @@ def _chat_reply(message: str, context: Optional[dict] = None) -> dict:
             region_key = "cebu"
         return finish(_best_time_text(region_key), "best_time")
 
-    # ------------------------------------------------------------- planning
     is_planning = any(word in lowered for word in planning_words)
     if is_planning:
         brief = _trip_brief_from_prompt(message, context)
-        itinerary = generate_trip(brief)
-        itinerary = dict(itinerary)
+        itinerary_model = generate_trip(brief)
+        stops_count = sum(len(day.stops) for day in itinerary_model.days)
+        itinerary = itinerary_model.model_dump(mode="json")
         itinerary["region_key"] = brief.region
         note = ""
         days_in_message = _extract_days(message)
@@ -803,7 +812,6 @@ def _chat_reply(message: str, context: Optional[dict] = None) -> dict:
                 f"{brief.pace} pace{note}. Review the proposal and open it when it looks right."
             )
         out = finish(reply, "planning", itinerary)
-        stops_count = sum(len((day or {}).get("stops") or []) for day in (itinerary.get("days") or []))
         out["proposal"] = {
             "type": "itinerary-rebuild",
             "destination": itinerary.get("destination"),
@@ -830,9 +838,7 @@ def _chat_reply(message: str, context: Optional[dict] = None) -> dict:
         if pending and isinstance(pending, dict) and pending.get("itinerary"):
             itinerary = dict(pending["itinerary"])
             itinerary["region_key"] = pending.get("region") or itinerary.get("region_key")
-            reply = (
-                f"Applied: your {itinerary.get('days') and 'itinerary' or 'plan'} is now open in your itinerary view."
-            )
+            reply = "Applied — your itinerary is now open in the trip view."
             out = finish(reply, "apply-itinerary", itinerary)
             out["applied"] = True
             return out

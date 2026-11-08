@@ -33,6 +33,94 @@ class BackendApiTests(unittest.TestCase):
         self.assertIn("free_mode", payload)
         self.assertIn("map_provider", payload)
 
+    def test_destinations_search_and_featured(self):
+        featured = self.client.get("/destinations/featured").json()["destinations"]
+        ids = [d["id"] for d in featured]
+        self.assertIn("bohol", ids)  # UI offered Bohol before the backend knew it
+        self.assertLess(ids.index("cebu"), ids.index("tokyo"))  # Philippines first
+
+        bohol = self.client.get("/destinations/search", params={"q": "bohol"}).json()["destinations"]
+        self.assertEqual([d["id"] for d in bohol], ["bohol"])
+
+        beaches = self.client.get("/destinations/search", params={"q": "beaches"}).json()["destinations"]
+        self.assertTrue({"palawan", "bohol"} & {d["id"] for d in beaches})
+
+        missing = self.client.get("/destinations/search", params={"q": "atlantis"})
+        self.assertEqual(missing.status_code, 404)
+
+    def test_weather_endpoint_labels_live_and_estimate(self):
+        live = self.client.get("/weather/cebu").json()
+        self.assertEqual(live["region"], "cebu")
+        # Live data may be blocked in sandboxed environments; the contract
+        # must be honest about whichever state we end up in.
+        self.assertIn(live["source"], {"open_meteo", "seasonal_estimate"})
+        self.assertEqual(live["live"], live["source"] == "open_meteo")
+        self.assertTrue(live["note"])
+
+        estimate = self.client.get("/weather/cebu", params={"month": "January"}).json()
+        self.assertEqual(estimate["source"], "seasonal_estimate")
+        self.assertFalse(estimate["live"])
+        self.assertIn("outside the main rainy months", estimate["season_note"])
+
+    def test_chat_proposal_then_apply(self):
+        ask = self.client.post("/chat", json={"message": "plan a 5 day bohol trip"}).json()
+        self.assertEqual(ask["proposal"]["destination"], "Bohol")
+        self.assertEqual(ask["proposal"]["days"], 5)
+        self.assertGreater(ask["proposal"]["stops_count"], 0)
+        self.assertTrue(ask["context"]["pending_proposal"]["itinerary"])
+
+        applied = self.client.post(
+            "/chat", json={"message": "apply", "context": ask["context"]}
+        ).json()
+        self.assertTrue(applied.get("applied"))
+        self.assertEqual(len(applied["itinerary"]["days"]), 5)
+
+        discarded = self.client.post(
+            "/chat",
+            json={"message": "discard", "context": {"pending_proposal": {"itinerary": {}}}},
+        ).json()
+        self.assertIn("Discarded", discarded["reply"])
+
+    def test_destinations_generate_for_bohol(self):
+        response = self.client.post(
+            "/trip/generate",
+            json={
+                "destination": "Bohol",
+                "region": "bohol",
+                "days": 2,
+                "budget": 16000,
+                "interests": ["nature", "family"],
+                "pace": "relaxed",
+                "travelers": "family",
+                "month": "February",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["destination"], "Bohol")
+        self.assertTrue(payload["days"])
+
+    def test_notifications_roundtrip(self):
+        signup = self.client.post(
+            "/auth/signup",
+            json={"name": "Notify", "email": "notify@example.com", "password": "secret123"},
+        )
+        self.assertEqual(signup.status_code, 200)
+        token = signup.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        listing = self.client.get("/notifications", headers=headers).json()
+        self.assertGreaterEqual(listing["unread"], 1)  # welcome notification exists
+        self.assertTrue(listing["notifications"])
+
+        marked = self.client.post("/notifications/read", headers=headers).json()
+        self.assertGreaterEqual(marked["updated"], 1)
+        after = self.client.get("/notifications", headers=headers).json()
+        self.assertEqual(after["unread"], 0)
+
+        unauth = self.client.get("/notifications")
+        self.assertEqual(unauth.status_code, 401)
+
     def test_generate_trip_has_coordinates(self):
         response = self.client.post(
             "/trip/generate",

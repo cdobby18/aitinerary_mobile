@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -46,7 +46,6 @@ import {
   colors,
   destinationPicks,
   fonts,
-  heroHeadlines,
   layout,
   photoForDestination,
   photoForTheme,
@@ -223,18 +222,6 @@ const fallbackWeather: Record<string, WeatherInfo> = {
   singapore: { temp: 31, label: 'humid', icon: 'partly-sunny-outline' },
 };
 
-const describeWeatherCode = (code: number): Pick<WeatherInfo, 'label' | 'icon'> => {
-  if (code === 0) return { label: 'clear', icon: 'sunny-outline' };
-  if (code === 1 || code === 2) return { label: 'partly cloudy', icon: 'partly-sunny-outline' };
-  if (code === 3) return { label: 'overcast', icon: 'cloud-outline' };
-  if (code === 45 || code === 48) return { label: 'foggy', icon: 'cloud-outline' };
-  if (code >= 51 && code <= 57) return { label: 'drizzle', icon: 'rainy-outline' };
-  if (code >= 61 && code <= 67) return { label: 'rain', icon: 'rainy-outline' };
-  if (code >= 80 && code <= 82) return { label: 'showers', icon: 'rainy-outline' };
-  if (code >= 95) return { label: 'stormy', icon: 'thunderstorm-outline' };
-  return { label: 'clear', icon: 'sunny-outline' };
-};
-
 const features = [
   {
     icon: 'earth-outline' as const,
@@ -319,7 +306,9 @@ export default function App() {
   const [savedTrips, setSavedTrips] = useState<any[]>([]);
   const [chatPrompt, setChatPrompt] = useState('Plan a 4-day Cebu trip for a couple with beaches and local food');
   const [chatLoading, setChatLoading] = useState(false);
-  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  const [chatMessages, setChatMessages] = useState<
+    { role: 'user' | 'assistant'; text: string; proposal?: any }[]
+  >([]);
   const [activeTab, setActiveTab] = useState<TabKey>('home');
 
   // Focused flows — each hides the bottom tab bar while active.
@@ -335,6 +324,10 @@ export default function App() {
   const [unreadCount, setUnreadCount] = useState(appNotifications.length);
   const [homeSearch, setHomeSearch] = useState('');
   const [homeNotice, setHomeNotice] = useState<string | null>(null);
+  const [backendDestinations, setBackendDestinations] = useState<any[] | null>(null);
+  const [serverNotifications, setServerNotifications] = useState<any[] | null>(null);
+  const [serverUnread, setServerUnread] = useState<number | null>(null);
+  const [lastProposal, setLastProposal] = useState<Record<string, unknown> | null>(null);
 
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -440,68 +433,106 @@ export default function App() {
     fetchMapsConfig();
   }, []);
 
+  // Curated featured feed for Home + Explore — backend is the source of
+  // truth for what the planner can actually build; falls back to the
+  // bundled picks offline.
   useEffect(() => {
-    const coords =
-      destinationPicks.find(pick => pick.id === region)?.coords ?? destinationPicks[0].coords;
+    let active = true;
+    const fetchFeatured = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/destinations/featured`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!active) return;
+        const list = data?.destinations;
+        if (Array.isArray(list) && list.length) setBackendDestinations(list);
+      } catch {
+        // Offline: keep the bundled picks.
+      }
+    };
+    if (Platform.OS !== 'web' || isOnline !== false) fetchFeatured();
+    return () => {
+      active = false;
+    };
+  }, [isOnline]);
+
+  // Signed-in users get their notifications from the server; guests use the
+  // bundled list. Refetched when the panel opens so nothing goes stale.
+  useEffect(() => {
+    if (!authToken) {
+      setServerNotifications(null);
+      setServerUnread(null);
+      return;
+    }
+    let active = true;
+    const fetchNotifications = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/notifications`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!active) return;
+        if (Array.isArray(data?.notifications)) {
+          setServerNotifications(data.notifications);
+          setServerUnread(Number(data.unread ?? 0));
+        }
+      } catch {
+        // Offline: fall back to the bundled list without clearing it.
+      }
+    };
+    fetchNotifications();
+    return () => {
+      active = false;
+    };
+  }, [authToken, notificationsOpen]);
+
+  useEffect(() => {
     let active = true;
 
     setLiveWeather(null);
     setForecastWeather(null);
 
+    // Weather now flows through the backend so the AI layer and risk logic
+    // see the same data. The backend labels live vs seasonal honestly.
     const fetchWeather = async () => {
       try {
-        const url =
-          `https://api.open-meteo.com/v1/forecast?latitude=${coords.latitude}` +
-          `&longitude=${coords.longitude}&current=temperature_2m,weather_code&timezone=auto`;
-        const response = await fetch(url);
+        const query = month ? `?month=${encodeURIComponent(month)}` : '';
+        const response = await fetch(`${API_BASE_URL}/weather/${region}${query}`);
         if (!response.ok) return;
 
         const data = await response.json();
-        const current = data?.current;
-        if (!active || typeof current?.temperature_2m !== 'number') return;
+        if (!active) return;
+        if (!data?.live || !data?.current) return;
 
-        const description = describeWeatherCode(Number(current.weather_code));
+        const label = String(data.current.label || 'clear');
         setLiveWeather({
-          temp: Math.round(current.temperature_2m),
-          label: description.label,
-          icon: description.icon,
+          temp: Math.round(data.current.temp),
+          label,
+          icon: label.includes('rain') || label.includes('storm') || label.includes('shower')
+            ? 'rainy-outline'
+            : label.includes('cloud') || label.includes('fog')
+              ? 'cloud-outline'
+              : label.includes('partly')
+                ? 'partly-sunny-outline'
+                : 'sunny-outline',
+        });
+        setForecastWeather({
+          temp: Math.round(data.current.avg_temp ?? data.current.temp),
+          rainChance: Number(data.current.rain_chance || 0),
         });
       } catch {
         // Keep the local fallback when the weather service is unavailable.
       }
     };
 
-    const fetchForecast = async () => {
-      try {
-        const url =
-          `https://api.open-meteo.com/v1/forecast?latitude=${coords.latitude}` +
-          `&longitude=${coords.longitude}&daily=temperature_2m_max,precipitation_probability_max&timezone=auto&forecast_days=7`;
-        const response = await fetch(url);
-        if (!response.ok) return;
-
-        const data = await response.json();
-        const maxes = data?.daily?.temperature_2m_max;
-        const rains = data?.daily?.precipitation_probability_max;
-        if (!active || !Array.isArray(maxes) || maxes.length === 0) return;
-
-        const avgTemp = Math.round(
-          maxes.reduce((sum: number, value: number) => sum + Number(value || 0), 0) / maxes.length,
-        );
-        const rainChance = Array.isArray(rains)
-          ? Math.max(...rains.map((value: number) => Number(value || 0)))
-          : 0;
-        setForecastWeather({ temp: avgTemp, rainChance });
-      } catch {
-        // Keep the local fallback when the forecast service is unavailable.
-      }
-    };
-
-    fetchWeather();
-    fetchForecast();
+    if (Platform.OS !== 'web' || typeof navigator === 'undefined' || isOnline !== false) {
+      fetchWeather();
+    }
     return () => {
       active = false;
     };
-  }, [region]);
+  }, [region, month, isOnline]);
 
   useEffect(() => {
     let active = true;
@@ -711,20 +742,40 @@ export default function App() {
     setChatLoading(true);
     setError(null);
 
+    // Trip context so follow-ups like "make it 5 days" keep working.
+    const context: Record<string, unknown> = {
+      region: result?.region || region,
+      days: result?.days?.length ? result.days.length : Number(days) || undefined,
+      budget: (result?.total_budget ?? Number(budget)) || undefined,
+      travelers,
+      month: month,
+    };
+    if (lastProposal) context.pending_proposal = lastProposal;
+
     try {
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage }),
+        body: JSON.stringify({ message: userMessage, context }),
       });
 
       const data = await response.json();
       if (!response.ok) throw new Error(data?.detail || 'Unable to answer right now.');
 
-      setChatMessages(current => [...current, { role: 'assistant', text: data.reply || 'Done.' }]);
-
-      if (data?.itinerary) {
-        openTrip(data.itinerary);
+      const replyText = data.reply || 'Done.';
+      if (data.proposal && data.itinerary && !data.applied) {
+        // The assistant proposes — the user reviews and decides (design §10).
+        setChatMessages(current => [
+          ...current,
+          { role: 'assistant', text: replyText, proposal: { ...data.proposal, itinerary: data.itinerary } },
+        ]);
+        setLastProposal({ itinerary: data.itinerary, region: data.proposal.region, destination: data.proposal.destination });
+      } else {
+        setChatMessages(current => [...current, { role: 'assistant', text: replyText }]);
+        if (data.applied || !data.proposal) setLastProposal(null);
+        if (data?.itinerary) {
+          openTrip(data.itinerary);
+        }
       }
     } catch (err) {
       const message =
@@ -738,6 +789,24 @@ export default function App() {
     } finally {
       setChatLoading(false);
     }
+  };
+
+  const applyProposal = (proposal: any) => {
+    if (!proposal?.itinerary) return;
+    setLastProposal(null);
+    setChatMessages(current => [
+      ...current,
+      { role: 'assistant', text: `Applied — showing your ${proposal.days || proposal.itinerary?.days?.length || ''} day plan now.` },
+    ]);
+    openTrip(proposal.itinerary);
+  };
+
+  const discardProposal = () => {
+    setLastProposal(null);
+    setChatMessages(current => [
+      ...current,
+      { role: 'assistant', text: 'Discarded — your current plan stays exactly as it was.' },
+    ]);
   };
 
   const handleChatPlan = async () => {
@@ -879,6 +948,27 @@ export default function App() {
   const canUseGoogleMaps = Boolean(mapsConfig?.google_maps_enabled);
   const nativeMapAvailable = Platform.OS !== 'web' && Boolean(MapView) && Boolean(Marker);
   const activePick = destinationPicks.find(pick => pick.id === region) ?? destinationPicks[0];
+
+  // Featured feed comes from the backend (source of truth for what the
+  // planner can build), joined with the local picks for photos and icons.
+  const destinationCatalog = useMemo(() => {
+    if (!backendDestinations?.length) return destinationPicks;
+    const byId = new Map(backendDestinations.map((card: any) => [card.id, card]));
+    const joined = destinationPicks.filter(pick => byId.has(pick.id));
+    const extras = backendDestinations
+      .filter((card: any) => !destinationPicks.some(pick => pick.id === card.id))
+      .map((card: any) => ({
+        id: card.id,
+        label: card.name,
+        mood: card.mood ?? '',
+        blurb: card.tagline ?? '',
+        photo: photoForDestination(card.id, card.id),
+        icon: 'compass-outline' as const,
+        coords: { latitude: 0, longitude: 0 },
+      }));
+    return [...joined, ...extras] as unknown as typeof destinationPicks;
+  }, [backendDestinations]);
+
   const activePhoto = photoForDestination(destination, region);
   const currentMonthName = new Date().toLocaleString('en-US', { month: 'long' });
   const monthMatchesNow = month === currentMonthName;
@@ -1005,7 +1095,7 @@ export default function App() {
                 Your next escape
               </AppText>
               <AppText variant="display" style={styles.authTitle}>
-                Plan smarter trips in minutes.
+                Where your next trip begins.
               </AppText>
               <AppText variant="bodySm" style={styles.authText}>
                 From island-hopping to food-first city breaks, build a route that fits your pace and
@@ -1107,20 +1197,41 @@ export default function App() {
     </ScrollView>
   );
 
-  const startSearch = (value: string) => {
+  const startSearch = async (value: string) => {
     const term = value.trim();
     if (!term) return;
-    const pick = destinationPicks.find(item => item.label.toLowerCase() === term.toLowerCase());
-    if (pick) {
-      setRegion(pick.id);
-      setDestination(pick.label);
-    } else {
-      const regionMatch = destinationPicks.find(item => term.toLowerCase().includes(item.id));
-      if (regionMatch) setRegion(regionMatch.id);
-      setDestination(term);
-    }
+
     setRecentSearches(current => [term, ...current.filter(item => item !== term)].slice(0, 4));
     setExploreQuery(term);
+
+    // Ask the backend first — it is the source of truth for what the
+    // planner can build. Falls back to the local curated list offline.
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/destinations/search?q=${encodeURIComponent(term)}`,
+      );
+      const data = await response.json();
+      if (response.status === 404) {
+        setHomeNotice(`${term} is not in the beta yet — try Cebu, Palawan, Bohol, Manila, Tokyo, or Singapore.`);
+        return;
+      }
+      const first = data?.destinations?.[0];
+      if (first) {
+        setRegion(first.id);
+        setDestination(first.name);
+      }
+    } catch {
+      const pick = destinationPicks.find(item => item.label.toLowerCase() === term.toLowerCase());
+      if (pick) {
+        setRegion(pick.id);
+        setDestination(pick.label);
+      } else {
+        const regionMatch = destinationPicks.find(item => term.toLowerCase().includes(item.id));
+        if (regionMatch) setRegion(regionMatch.id);
+        setDestination(term);
+      }
+    }
+
     openPlanFlow();
   };
 
@@ -1134,8 +1245,44 @@ export default function App() {
     openPlanFlow();
   };
 
-  const markNotificationsRead = () => {
-    setUnreadCount(0);
+  const displayNotifications = authToken ? serverNotifications ?? appNotifications : appNotifications;
+  const displayUnread = authToken ? (serverUnread ?? 0) : unreadCount;
+
+  const markNotificationsRead = async () => {
+    if (authToken) {
+      setServerUnread(0);
+      setServerNotifications(current =>
+        current ? current.map((item: any) => ({ ...item, read: true })) : current,
+      );
+      try {
+        await fetch(`${API_BASE_URL}/notifications/read`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+      } catch {
+        // Local state already cleared; retry next time the panel opens.
+      }
+    } else {
+      setUnreadCount(0);
+    }
+  };
+
+  const notificationIconFor = (kind: string) => {
+    if (kind === 'welcome') return 'sparkles-outline';
+    if (kind === 'weather') return 'rainy-outline';
+    if (kind === 'trip') return 'trail-sign-outline';
+    return 'notifications-outline';
+  };
+
+  const notificationTime = (createdAt?: string | null) => {
+    if (!createdAt) return '';
+    const date = new Date(createdAt);
+    if (Number.isNaN(date.getTime())) return '';
+    const diff = Date.now() - date.getTime();
+    if (diff < 60_000) return 'just now';
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   const renderNotificationsPanel = () => (
@@ -1152,21 +1299,30 @@ export default function App() {
           <Ionicons name="close" size={18} color={colors.muted} />
         </TouchableOpacity>
       </View>
-      {appNotifications.map((item, index) => (
-        <View
-          key={item.id}
-          style={[styles.notifRow, index > 0 && styles.notifRowBorder, index >= unreadCount && styles.notifRowRead]}
-        >
-          <IconBadge name={item.icon as React.ComponentProps<typeof Ionicons>['name']} tone="teal" size={38} />
-          <View style={styles.notifBody}>
-            <AppText variant="label">{item.title}</AppText>
-            <AppText variant="caption">{item.text}</AppText>
+      {displayNotifications.map((item: any, index: number) => {
+        const isRead = authToken
+          ? Boolean(item.read)
+          : index >= unreadCount;
+        return (
+          <View
+            key={`${item.id}`}
+            style={[styles.notifRow, index > 0 && styles.notifRowBorder, isRead && styles.notifRowRead]}
+          >
+            <IconBadge
+              name={authToken ? notificationIconFor(item.kind) : item.icon}
+              tone="teal"
+              size={38}
+            />
+            <View style={styles.notifBody}>
+              <AppText variant="label">{item.title}</AppText>
+              <AppText variant="caption">{authToken ? item.body : item.text}</AppText>
+            </View>
+            <AppText variant="caption" style={styles.notifTime}>
+              {authToken ? notificationTime(item.created_at) : item.time}
+            </AppText>
           </View>
-          <AppText variant="caption" style={styles.notifTime}>
-            {item.time}
-          </AppText>
-        </View>
-      ))}
+        );
+      })}
     </Card>
   );
 
@@ -1179,7 +1335,7 @@ export default function App() {
         <View>
           <AppText style={styles.brand}>AITinerary</AppText>
           <AppText variant="eyebrow" style={styles.subBrand}>
-            Plan smarter. Travel better.
+            Six destinations, planned properly
           </AppText>
         </View>
       </View>
@@ -1196,7 +1352,7 @@ export default function App() {
         }}
       >
         <Ionicons name="notifications-outline" size={21} color={colors.ink} />
-        {unreadCount ? <View style={styles.notifDot} /> : null}
+        {displayUnread ? <View style={styles.notifDot} /> : null}
       </TouchableOpacity>
     </View>
   );
@@ -1214,10 +1370,10 @@ export default function App() {
       />
       <View style={styles.homeHeroBody}>
         <AppText variant="hero" style={styles.homeHeroTitle}>
-          Plan Smarter. Travel Better.
+          Where to next?
         </AppText>
         <AppText variant="bodySm" style={styles.homeHeroText}>
-          Your AI travel companion for unforgettable journeys.
+          Pick a destination, set a budget, and get a day-by-day plan you can actually follow.
         </AppText>
 
         <View style={styles.homeSearchWrap}>
@@ -1497,15 +1653,15 @@ export default function App() {
           </View>
           <View>
             <AppText variant="h3" style={styles.promoTitle}>
-              Need help planning?
+              Stuck on the details?
             </AppText>
             <AppText variant="caption" style={styles.promoText}>
-              Ask me anything about your trip!
+              The assistant knows the routes, fees, and best months.
             </AppText>
           </View>
         </View>
         <Button
-          label="Chat with AI Assistant"
+          label="Open the assistant"
           icon="chatbubble-ellipses-outline"
           variant="secondary"
           onPress={() => openAssistant()}
@@ -1548,7 +1704,7 @@ export default function App() {
 
   // ---------- Explore ----------
 
-  const exploreVisiblePicks = destinationPicks.filter(pick => {
+  const exploreVisiblePicks = destinationCatalog.filter(pick => {
     if (exploreCategory !== 'all' && !(destinationCategoryMap[pick.id] || []).includes(exploreCategory)) {
       return false;
     }
@@ -1756,7 +1912,7 @@ export default function App() {
           <AppText variant="display" style={styles.screenTitle}>
             Your trips
           </AppText>
-          <AppText variant="body">Upcoming plans and past journeys, all in one place.</AppText>
+          <AppText variant="body">Trips you've saved, and the ones you're still shaping.</AppText>
         </View>
 
         <View style={styles.tripsSection}>
@@ -2321,6 +2477,45 @@ export default function App() {
                   {message.text}
                 </AppText>
               </View>
+              {message.proposal ? (
+                <View style={styles.proposalCard}>
+                  <AppText variant="caption" style={styles.proposalCardEyebrow}>
+                    {message.proposal.replaces_previous ? 'Proposed change' : 'Proposed itinerary'}
+                  </AppText>
+                  <View style={styles.proposalCardRow}>
+                    <AppText variant="h3">
+                      {message.proposal.destination}
+                    </AppText>
+                    <AppText variant="caption">
+                      {message.proposal.days} days · {message.proposal.stops_count} stops ·{' '}
+                      {message.proposal.pace}
+                    </AppText>
+                  </View>
+                  <View style={styles.proposalCardRow}>
+                    <AppText variant="caption">
+                      Est. total {formatCost(message.proposal.budget_total, regionCurrency(message.proposal.region))} ·{' '}
+                      {message.proposal.travelers} profile
+                    </AppText>
+                  </View>
+                  <View style={styles.proposalActions}>
+                    <Button
+                      label="Apply"
+                      icon="checkmark"
+                      onPress={() => applyProposal(message.proposal)}
+                      style={styles.proposalButton}
+                    />
+                    <Button
+                      label="Discard"
+                      variant="secondary"
+                      onPress={discardProposal}
+                      style={styles.proposalButton}
+                    />
+                  </View>
+                  <AppText variant="caption" style={styles.proposalNote}>
+                    Costs are estimates, not confirmed booking prices.
+                  </AppText>
+                </View>
+              ) : null}
             </View>
           ))
         )}
@@ -3753,6 +3948,38 @@ const styles = StyleSheet.create({
   },
   chatBubbleAssistantText: {
     color: colors.ink,
+  },
+  proposalCard: {
+    alignSelf: 'flex-start',
+    width: '100%',
+    backgroundColor: colors.white,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    padding: 14,
+    marginTop: 10,
+    gap: 6,
+  },
+  proposalCardEyebrow: {
+    color: colors.teal,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    fontSize: 10,
+  },
+  proposalCardRow: {
+    gap: 2,
+  },
+  proposalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
+  },
+  proposalButton: {
+    flex: 1,
+  },
+  proposalNote: {
+    color: colors.muted,
+    fontStyle: 'italic',
   },
   featureRow: {
     flexDirection: 'row',
