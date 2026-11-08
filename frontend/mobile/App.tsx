@@ -3334,7 +3334,7 @@ export default function App() {
     );
   };
 
-  const flowsActive = assistantOpen || planOpen || viewingTrip;
+  const flowsActive = assistantOpen || planOpen;
 
   // Focused itinerary view failed to produce a trip (backend down, validation
   // error, etc.) — show a real error state instead of rendering without data.
@@ -3393,7 +3393,9 @@ export default function App() {
         </View>
       </ScrollView>
 
-      {!flowsActive ? <BottomNav active={activeTab} onChange={changeTab} /> : null}
+      {/* Plan flow and the assistant stay focused, but the itinerary result
+          keeps the tab bar so the user can go anywhere else from there. */}
+      {assistantOpen || planOpen ? null : <BottomNav active={activeTab} onChange={changeTab} />}
     </SafeAreaView>
   );
 
