@@ -28,7 +28,7 @@ Build a region-aware Philippines-first beta trip planner that works as a mobile 
 | P2 | Notifications backend | Done | `notifications` table + `GET /notifications` and `POST /notifications/read`; welcome notification on signup; signed-in UI renders server notifications, guests keep the bundled list | Add notification kinds for trip reminders |
 | P2 | Curated/destinations feed endpoint | Done | `GET /destinations/featured` returns the curated ordering (PH first); Bohol has a full region profile and is searchable/weather-ready; Explore joins the feed with local photos | Wire curated collections to backend data next |
 | P2 | Trip start/end dates and status in the contract | Planned | My Trips splits Upcoming/Past from a free-text month field only | Add structured start/end dates to the trip contract for accurate status |
-| P2 | Structured chat reply format | Planned | Assistant returns prose + optional itinerary JSON; the UI has no structured preview cards or to-do chips | Define a typed chat response shape (message + proposed change + preview) |
+| P2 | Structured chat reply format | Done | Reply shape is now `reply` + `intent` + optional `proposal` block (destination/days/budget/stops/replaces) + `context.pending_proposal`; the UI renders typed proposal cards with Apply/Discard | Add diff-style chips for edit-type proposals |
 | P2 | Add external API integrations | Planned | Weather, maps, and transport provider APIs | Integrate after MVP is stable |
 | P3 | Expand beyond Philippines beta | In Progress | Japan and Singapore region data and frontend picks added | Add UI grouping and more regions |
 | P3 | Deploy and production readiness | In Progress | Auth, env config, DB, logging, CI, and Docker added | Continue hardening |
